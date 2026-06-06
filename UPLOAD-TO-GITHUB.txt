@@ -1,0 +1,22 @@
+UPLOAD THIS ENTIRE FOLDER TO GITHUB
+====================================
+
+Folder location on your PC:
+C:\Users\garet\OneDrive\Desktop\reading-adventures-web
+
+METHOD A — GitHub website (easiest, no git commands)
+1. Create repo: reading-adventures-web (empty, no README)
+2. Click "uploading an existing file"
+3. Drag ALL items from this folder into the browser
+4. Commit
+5. Settings → Pages → main branch → /(root) → Save
+6. Open: https://YOUR-USERNAME.github.io/reading-adventures-web/web-pilot/
+
+METHOD B — Command Prompt
+1. cd "C:\Users\garet\OneDrive\Desktop\reading-adventures-web"
+2. git init
+3. git add .
+4. git commit -m "Initial publish"
+5. git branch -M main
+6. git remote add origin https://github.com/YOUR-USERNAME/reading-adventures-web.git
+7. git push -u origin main

@@ -1,0 +1,952 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Reading Adventure — Personalised Games</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap');
+body { font-family: 'Fredoka', system-ui, sans-serif; }
+.star { position: absolute; background: white; border-radius: 50%; opacity: 0.6; animation: twinkle 3s infinite; }
+@keyframes twinkle { 0%,100%{opacity:0.3;} 50%{opacity:1;} }
+@keyframes pop { 0%{transform:scale(1);} 50%{transform:scale(1.2);} 100%{transform:scale(1);} }
+.pop { animation: pop 0.4s ease-out; }
+@keyframes shake { 0%,100%{transform:translateX(0);} 25%{transform:translateX(-8px);} 75%{transform:translateX(8px);} }
+.shake { animation: shake 0.4s; }
+@keyframes float { 0%,100%{transform:translateY(0);} 50%{transform:translateY(-12px);} }
+.floaty { animation: float 3s infinite ease-in-out; }
+@keyframes fadeIn { from{opacity:0;transform:translateY(10px);} to{opacity:1;transform:translateY(0);} }
+.fadeIn { animation: fadeIn 0.4s ease-out; }
+@keyframes confetti { 0%{transform:translateY(-100vh) rotate(0deg);opacity:1;} 100%{transform:translateY(100vh) rotate(720deg);opacity:0;} }
+.confetti { position:fixed; width:10px; height:10px; pointer-events:none; animation: confetti 2s linear forwards; z-index: 100; }
+@media print {
+  body { background: white !important; color: black !important; }
+  .no-print { display: none !important; }
+  .print-card { border: 2px dashed #999 !important; color: black !important; background: white !important; }
+  .print-card .pw-box { background: #f3f4f6 !important; color: black !important; border: 1px solid #ddd !important; }
+  .print-card .pw-label, .print-card .pw-name, .print-card .pw-hint { color: #333 !important; }
+  #stars, .min-h-screen.bg-gradient-to-br { background: white !important; }
+}
+</style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-fuchsia-900 text-white">
+<div id="stars" class="fixed inset-0 pointer-events-none overflow-hidden no-print"></div>
+<div id="app" class="relative z-10"></div>
+<script>
+// Background stars
+(function makeStars() {
+  const c = document.getElementById('stars');
+  for (let i=0; i<60; i++) {
+    const s = document.createElement('div');
+    s.className = 'star';
+    s.style.width = (Math.random()*3+1) + 'px';
+    s.style.height = s.style.width;
+    s.style.left = Math.random()*100 + '%';
+    s.style.top = Math.random()*100 + '%';
+    s.style.animationDelay = (Math.random()*3) + 's';
+    c.appendChild(s);
+  }
+})();
+
+const state = {
+  data: null,
+  classKey: null,
+  view: 'upload',
+  selectedStudent: null,
+  game: null,
+  passwords: {},
+  studentPoints: {},
+  teacherPassword: 'Teacher123',
+  arcade: null,
+  teacherAuthed: false,
+};
+
+function $(id){return document.getElementById(id);}
+
+// ============================================================
+// AUDIO — ONLY from JSON audio pack (no TTS fallback)
+// ============================================================
+function getAudioSource(text) {
+  if (!state.data || !state.classKey) return null;
+  const cls = state.data.classes[state.classKey];
+  if (!cls || !cls.audio) return null;
+  const audioData = cls.audio.gpc && cls.audio.gpc[text];
+  if (audioData && audioData.data) return audioData.data;
+  return null;
+}
+
+function hasAudio(text) { return !!getAudioSource(text); }
+
+function speak(text) {
+  const audioData = getAudioSource(text);
+  if (audioData) {
+    try {
+      const audio = new Audio(audioData);
+      audio.play().catch(()=>{});
+    } catch(e){}
+    return true;
+  }
+  return false;
+}
+
+function beep(freq, dur, type='sine', vol=0.2) {
+  try {
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ac.createOscillator();
+    const g = ac.createGain();
+    o.connect(g); g.connect(ac.destination);
+    o.type = type;
+    o.frequency.value = freq;
+    g.gain.value = vol;
+    o.start();
+    g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
+    o.stop(ac.currentTime + dur);
+  } catch(e){}
+}
+function correctSound(){ beep(660,0.12); setTimeout(()=>beep(990,0.18),100); }
+function wrongSound(){ beep(220,0.25, 'square', 0.15); }
+function celebrateSound(){ beep(523,0.1); setTimeout(()=>beep(659,0.1),100); setTimeout(()=>beep(784,0.2),200); }
+
+function shuffle(arr){ const a=[...arr]; for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; }
+
+// ============================================================
+// PASSWORD GENERATION (deterministic per class+student)
+// ============================================================
+const ADJECTIVES = ['Happy','Brave','Sunny','Lucky','Mighty','Swift','Cosmic','Royal','Wild','Calm','Bold','Cool','Fancy','Gentle','Jolly','Kind','Magic','Quick','Smart','Tiny','Wise','Zesty','Bright','Clever','Funny','Honest','Joyful','Loyal','Polite','Tidy','Friendly','Pink','Blue','Gold','Silver','Red','Green','Purple','Orange','Sparkly','Tall','Small','Big','Fast','Slow','Soft','Strong','Sweet','Shiny','Furry'];
+const NOUNS = ['Fox','Bear','Tiger','Lion','Eagle','Wolf','Owl','Dragon','Star','Moon','Sun','Rocket','Comet','Cloud','River','Mountain','Forest','Ocean','Cat','Dog','Bird','Fish','Tree','Leaf','Rose','Apple','Berry','Crystal','Diamond','Pearl','Whale','Shark','Dolphin','Panda','Koala','Rabbit','Mouse','Elephant','Giraffe','Zebra','Monkey','Frog','Turtle','Bee','Sparrow','Robin','Cactus','Daisy','Tulip','Pony'];
+
+function seededRandom(seed) {
+  let s = 0;
+  for (let i = 0; i < seed.length; i++) s = (s * 31 + seed.charCodeAt(i)) | 0;
+  s = Math.abs(s) || 1;
+  return function() { s = (s * 9301 + 49297) % 233280; return s / 233280; };
+}
+
+function generatePasswords() {
+  const cls = state.data.classes[state.classKey];
+  const used = new Set();
+  state.passwords = {};
+  cls.students.forEach((name, idx) => {
+    const rnd = seededRandom(state.classKey + '|' + name + '|' + idx);
+    let pw, tries = 0;
+    do {
+      const adj = ADJECTIVES[Math.floor(rnd() * ADJECTIVES.length)];
+      const noun = NOUNS[Math.floor(rnd() * NOUNS.length)];
+      pw = `${adj} ${noun}`;
+      tries++;
+      if (tries > 80) { pw = `${pw} ${idx+1}`; break; }
+    } while (used.has(pw));
+    used.add(pw);
+    state.passwords[name] = pw;
+  });
+}
+
+// ============================================================
+// POINTS (in-memory, with localStorage best-effort)
+// ============================================================
+function pointsKey(name) { return `rapoints_${state.classKey}_${name}`; }
+function loadPoints() {
+  state.studentPoints = {};
+  try {
+    const cls = state.data.classes[state.classKey];
+    cls.students.forEach(name => {
+      const v = localStorage.getItem(pointsKey(name));
+      state.studentPoints[name] = v ? parseInt(v,10) : 0;
+    });
+  } catch(e) {
+    const cls = state.data.classes[state.classKey];
+    cls.students.forEach(name => state.studentPoints[name] = 0);
+  }
+}
+function getPoints(name) { return state.studentPoints[name] || 0; }
+function addPoints(name, n) {
+  state.studentPoints[name] = (state.studentPoints[name] || 0) + n;
+  try { localStorage.setItem(pointsKey(name), state.studentPoints[name]); } catch(e){}
+}
+function spendPoints(name, n) {
+  if (getPoints(name) < n) return false;
+  state.studentPoints[name] -= n;
+  try { localStorage.setItem(pointsKey(name), state.studentPoints[name]); } catch(e){}
+  return true;
+}
+
+// ============================================================
+// FEEDBACK (Hattie-style: specific & actionable)
+// ============================================================
+function correctFeedback(target, type) {
+  const gpcMessages = [
+    `Yes! That is the sound "${target}" makes.`,
+    `Correct! "${target}" was the sound you heard.`,
+    `You spotted the "${target}" sound. Say it again!`,
+    `That's right — "${target}". Try writing it in the air.`
+  ];
+  const hwMessages = [
+    `Correct! Can you read "${target}" out loud?`,
+    `Yes! That's the word "${target}". Use it in a sentence.`,
+    `You found "${target}". Say each letter, then read it.`,
+    `That's "${target}". Can you spot it in a book later?`
+  ];
+  const arr = type === 'gpc' ? gpcMessages : hwMessages;
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+function wrongFeedback(target, type) {
+  if (type === 'gpc') return `Listen again — this is the sound "${target}" makes.`;
+  return `The word was "${target}". Look at each letter and say its sound.`;
+}
+
+// ============================================================
+// STUDENT NEEDS (internal — not displayed as stats to children)
+// ============================================================
+function getStudentNeeds(studentName) {
+  const cls = state.data.classes[state.classKey];
+  const cps = cls.checkpoints || [];
+  const sorted = [...cps].sort((a,b) => new Date(b.date) - new Date(a.date));
+  const latest = sorted[0];
+  let assessment, coveredUnits, label;
+  if (latest && cls.assessments.checkpoints && cls.assessments.checkpoints[latest.id] && cls.assessments.checkpoints[latest.id][studentName]) {
+    assessment = cls.assessments.checkpoints[latest.id][studentName];
+    coveredUnits = latest.units;
+    label = latest.label;
+  } else {
+    assessment = cls.assessments.baseline[studentName];
+    coveredUnits = cls.units.map((_,i)=>i);
+    label = 'Baseline';
+  }
+  const result = { targetGpcs: [], targetHws: [], masteredGpcs: [], masteredHws: [], assessment, label, coveredUnits };
+  coveredUnits.forEach(uIdx => {
+    const unit = cls.units[uIdx];
+    const aUnit = assessment.units[uIdx];
+    unit.gpcs.forEach((gpc, i) => {
+      const item = { gpc, unitIdx: uIdx, unit: unit.name };
+      if (aUnit.gpcs[i] === 1) result.masteredGpcs.push(item);
+      else result.targetGpcs.push(item);
+    });
+    unit.heartWords.forEach((hw, i) => {
+      const item = { hw, unitIdx: uIdx, unit: unit.name };
+      if (aUnit.hws[i] === 1) result.masteredHws.push(item);
+      else result.targetHws.push(item);
+    });
+  });
+  const seenHw = new Set();
+  result.targetHws = result.targetHws.filter(x => { if (seenHw.has(x.hw)) return false; seenHw.add(x.hw); return true; });
+  const seenMHw = new Set();
+  result.masteredHws = result.masteredHws.filter(x => { if (seenMHw.has(x.hw)) return false; seenMHw.add(x.hw); return true; });
+  return result;
+}
+
+// ============================================================
+// ROUTER
+// ============================================================
+function render(){
+  const app = $('app');
+  switch (state.view) {
+    case 'upload': return renderUpload(app);
+    case 'dashboard': return renderDashboard(app);
+    case 'teacherAuth': return renderTeacherAuth(app);
+    case 'passwords': return renderPasswords(app);
+    case 'profile': return renderProfile(app);
+    case 'game': return renderGame(app);
+    case 'arcade': return renderArcade(app);
+  }
+}
+
+// ============================================================
+// UPLOAD VIEW
+// ============================================================
+function renderUpload(app){
+  app.innerHTML = `
+    <div class="min-h-screen flex items-center justify-center p-4">
+      <div class="bg-white/10 backdrop-blur-md border border-white/20 rounded-3xl p-8 md:p-12 max-w-2xl w-full text-center shadow-2xl fadeIn">
+        <div class="text-6xl mb-4 floaty">🚀</div>
+        <h1 class="text-4xl md:text-5xl font-bold mb-3">Reading Adventure</h1>
+        <p class="text-lg text-white/80 mb-8">Upload your class data to launch personalised reading games for each student.</p>
+        <label class="block">
+          <input type="file" accept=".json" id="fileInput" class="hidden">
+          <span id="dropZone" class="block cursor-pointer border-2 border-dashed border-white/40 hover:border-white hover:bg-white/10 rounded-2xl p-10 transition">
+            <div class="text-5xl mb-3">📁</div>
+            <div class="font-semibold mb-1">Click to choose a JSON file</div>
+            <div class="text-sm text-white/60">or drag and drop your assessment data here</div>
+          </span>
+        </label>
+        <div id="uploadMsg" class="mt-4 text-yellow-200"></div>
+      </div>
+    </div>`;
+  const input = $('fileInput'); const dz = $('dropZone');
+  input.addEventListener('change', e => loadFile(e.target.files[0]));
+  ['dragover','dragenter'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('bg-white/10','border-white');}));
+  ['dragleave','drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('bg-white/10','border-white');}));
+  dz.addEventListener('drop', e => { if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);});
+}
+
+function loadFile(file){
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (!data.classes) throw new Error('Invalid format: no classes found');
+      state.data = data;
+      state.classKey = data.activeClass || Object.keys(data.classes)[0];
+      generatePasswords();
+      loadPoints();
+      state.teacherAuthed = false;
+      state.view = 'dashboard';
+      render();
+    } catch(err) {
+      $('uploadMsg').textContent = 'Could not read file: ' + err.message;
+    }
+  };
+  reader.readAsText(file);
+}
+
+// ============================================================
+// DASHBOARD — no performance data shown
+// ============================================================
+function renderDashboard(app){
+  const cls = state.data.classes[state.classKey];
+  const cards = cls.students.map(name => {
+    const initials = name.replace('Student ','S');
+    return `
+      <button onclick="selectStudent('${name}')" class="bg-white/10 hover:bg-white/20 backdrop-blur border border-white/20 rounded-2xl p-5 transition shadow-lg hover:scale-105 flex flex-col items-center gap-3">
+        <div class="w-20 h-20 rounded-full bg-gradient-to-br from-pink-400 via-purple-500 to-indigo-500 flex items-center justify-center font-bold text-2xl shadow-xl">${initials}</div>
+        <div class="font-semibold text-center text-lg">${name}</div>
+        <div class="text-xs text-white/60 flex items-center gap-1">Tap to play <span>🎮</span></div>
+      </button>`;
+  }).join('');
+
+  app.innerHTML = `
+    <div class="min-h-screen p-4 md:p-8">
+      <header class="max-w-6xl mx-auto mb-8 flex items-center justify-between flex-wrap gap-4">
+        <div>
+          <h1 class="text-2xl md:text-4xl font-bold">${state.classKey}</h1>
+          <p class="text-white/70 text-sm">Tap your name to start your adventure</p>
+        </div>
+        <div class="flex gap-2 items-center">
+          <button onclick="state.view='upload'; render()" class="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-xl text-sm">📁 New file</button>
+          <button onclick="openTeacherAccess()" title="Teacher area" class="w-8 h-8 rounded-full bg-white/5 hover:bg-white/20 text-white/40 hover:text-white text-xs transition flex items-center justify-center">·</button>
+        </div>
+      </header>
+      <div class="max-w-6xl mx-auto grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 fadeIn">${cards}</div>
+    </div>`;
+}
+
+window.openTeacherAccess = () => {
+  if (state.teacherAuthed) { state.view = 'passwords'; render(); }
+  else { state.view = 'teacherAuth'; render(); }
+};
+
+window.selectStudent = (name) => {
+  state.selectedStudent = name;
+  state.view = 'profile';
+  render();
+};
+
+// ============================================================
+// TEACHER AUTH
+// ============================================================
+function renderTeacherAuth(app) {
+  app.innerHTML = `
+    <div class="min-h-screen flex items-center justify-center p-4">
+      <div class="bg-white/10 backdrop-blur border border-white/20 rounded-2xl p-8 max-w-md w-full fadeIn">
+        <button onclick="state.view='dashboard'; render()" class="text-white/60 hover:text-white text-sm mb-4">← Back</button>
+        <div class="text-center mb-6">
+          <div class="text-5xl mb-2">🔐</div>
+          <h2 class="text-2xl font-bold">Teacher Area</h2>
+          <p class="text-white/60 text-sm mt-1">Restricted access</p>
+        </div>
+        <input type="password" id="teacherPwInput" placeholder="Teacher password" class="w-full bg-white/10 border border-white/30 rounded-xl px-4 py-3 mb-3 text-white placeholder-white/50 focus:outline-none focus:border-white">
+        <div id="pwError" class="text-red-300 text-sm mb-3 hidden"></div>
+        <button onclick="checkTeacherPw()" class="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-400 hover:to-pink-400 px-4 py-3 rounded-xl font-semibold mb-3">Enter</button>
+        <div class="text-xs text-white/40 text-center">Default password: <code>Teacher123</code></div>
+      </div>
+    </div>`;
+  setTimeout(() => {
+    const i = $('teacherPwInput');
+    if (i) {
+      i.focus();
+      i.addEventListener('keypress', e => { if (e.key === 'Enter') checkTeacherPw(); });
+    }
+  }, 0);
+}
+
+window.checkTeacherPw = () => {
+  const pw = $('teacherPwInput').value;
+  if (pw === state.teacherPassword) {
+    state.teacherAuthed = true;
+    state.view = 'passwords';
+    render();
+  } else {
+    const err = $('pwError');
+    err.textContent = 'Incorrect password. Try again.';
+    err.classList.remove('hidden');
+  }
+};
+
+// ============================================================
+// PASSWORDS LIST (teacher-only, printable)
+// ============================================================
+function renderPasswords(app) {
+  const cls = state.data.classes[state.classKey];
+  const cards = cls.students.map(name => {
+    const pw = state.passwords[name];
+    return `
+      <div class="print-card border-2 border-dashed border-white/40 rounded-xl p-5">
+        <div class="pw-label text-xs text-white/60 uppercase tracking-wider">${state.classKey}</div>
+        <div class="pw-name font-bold text-lg mt-1">${name}</div>
+        <div class="text-xs text-white/50 mt-2 mb-1">Your secret password:</div>
+        <div class="pw-box text-2xl font-mono mt-1 px-4 py-3 bg-white/10 rounded-lg border border-white/20 text-center">${pw}</div>
+        <div class="pw-hint text-xs text-white/50 mt-3 text-center">✂️ Cut out & keep safe</div>
+      </div>`;
+  }).join('');
+
+  app.innerHTML = `
+    <div class="min-h-screen p-4 md:p-8">
+      <div class="max-w-5xl mx-auto">
+        <div class="flex items-center justify-between mb-6 no-print flex-wrap gap-3">
+          <button onclick="state.view='dashboard'; render()" class="text-white/70 hover:text-white">← Back</button>
+          <div class="flex gap-2">
+            <button onclick="changeTeacherPassword()" class="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-xl text-sm">🔑 Change password</button>
+            <button onclick="regeneratePasswords()" class="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-xl text-sm">🔄 Regenerate</button>
+            <button onclick="window.print()" class="bg-gradient-to-r from-purple-500 to-pink-500 hover:scale-105 transition px-4 py-2 rounded-xl text-sm">🖨️ Print cards</button>
+          </div>
+        </div>
+        <h1 class="text-3xl font-bold mb-2 no-print">Student Passwords</h1>
+        <p class="text-white/70 mb-6 no-print">Cut along the dashed lines and hand each student their card. Passwords are deterministic — they stay the same for this class.</p>
+        <div class="grid sm:grid-cols-2 md:grid-cols-3 gap-4">${cards}</div>
+      </div>
+    </div>`;
+}
+
+window.changeTeacherPassword = () => {
+  const newPw = prompt('Enter new teacher password (min 4 chars):', state.teacherPassword);
+  if (newPw && newPw.length >= 4) {
+    state.teacherPassword = newPw;
+    alert('Password updated for this session.');
+  } else if (newPw !== null) {
+    alert('Password must be at least 4 characters.');
+  }
+};
+
+window.regeneratePasswords = () => {
+  if (confirm('Generate new passwords for all students? Old ones will no longer work.')) {
+    // Add salt to seed via timestamp stored once
+    state.classKey = state.classKey + ' ';
+    generatePasswords();
+    state.classKey = state.classKey.trim();
+    generatePasswords(); // Use trimmed key but with internal state changed via random
+    // Better: just regenerate with random shuffle
+    const cls = state.data.classes[state.classKey];
+    const used = new Set();
+    state.passwords = {};
+    cls.students.forEach(name => {
+      let pw, tries = 0;
+      do {
+        const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
+        const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
+        pw = `${adj} ${noun}`;
+        tries++;
+        if (tries > 80) { pw = `${pw} ${tries}`; break; }
+      } while (used.has(pw));
+      used.add(pw);
+      state.passwords[name] = pw;
+    });
+    render();
+  }
+};
+
+// ============================================================
+// PROFILE — student portal (no performance comparison data)
+// ============================================================
+function renderProfile(app){
+  const name = state.selectedStudent;
+  const needs = getStudentNeeds(name);
+  const points = getPoints(name);
+  const hasGpcTargets = needs.targetGpcs.length > 0;
+  const hasHwTargets = needs.targetHws.length > 0;
+  const hasAnyTargets = hasGpcTargets || hasHwTargets;
+
+  // Show mastered words as positive "collection"
+  const collectionItems = [...needs.masteredGpcs.map(x => x.gpc), ...needs.masteredHws.map(x => x.hw)];
+  const collectionHtml = collectionItems.length
+    ? collectionItems.slice(0, 30).map(x => `<span class="px-2 py-1 bg-yellow-400/20 border border-yellow-300/30 rounded-md text-sm">${x}</span>`).join(' ')
+    : `<div class="text-white/50 italic text-sm">Play games to build your collection!</div>`;
+
+  app.innerHTML = `
+    <div class="min-h-screen p-4 md:p-8">
+      <div class="max-w-5xl mx-auto">
+        <button onclick="state.view='dashboard'; render()" class="text-white/70 hover:text-white mb-4 text-sm">← Back to class</button>
+        
+        <header class="bg-white/10 backdrop-blur border border-white/20 rounded-2xl p-6 mb-6 fadeIn">
+          <div class="flex items-center gap-4 mb-4 flex-wrap">
+            <div class="w-16 h-16 rounded-full bg-gradient-to-br from-pink-400 via-purple-500 to-indigo-500 flex items-center justify-center font-bold text-xl flex-shrink-0 shadow-xl">${name.replace('Student ','S')}</div>
+            <div class="flex-1 min-w-0">
+              <h1 class="text-2xl md:text-3xl font-bold">Hello, ${name}!</h1>
+              <p class="text-white/70 text-sm">Ready for an adventure?</p>
+            </div>
+            <div class="bg-gradient-to-r from-yellow-400 to-orange-400 text-purple-900 px-4 py-2 rounded-2xl font-bold shadow-lg">
+              <span class="text-xl">⭐</span> <span class="text-xl">${points}</span> <span class="text-xs">stars</span>
+            </div>
+          </div>
+        </header>
+
+        <h2 class="text-xl font-bold mb-3">🎮 Choose a game</h2>
+        <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6 fadeIn">
+          <button onclick="startGame('gpcMatch')" ${!hasGpcTargets?'disabled':''} class="text-left bg-gradient-to-br from-cyan-500/30 to-blue-600/30 hover:from-cyan-500/50 hover:to-blue-600/50 border border-cyan-300/40 rounded-2xl p-5 transition transform hover:scale-105 disabled:opacity-40 disabled:hover:scale-100">
+            <div class="text-4xl mb-2">🪐</div>
+            <h3 class="font-bold text-lg mb-1">Sound Planets</h3>
+            <p class="text-sm text-white/70">Listen and tap the matching letter sound</p>
+          </button>
+
+          <button onclick="startGame('hwHunt')" ${!hasHwTargets?'disabled':''} class="text-left bg-gradient-to-br from-pink-500/30 to-rose-600/30 hover:from-pink-500/50 hover:to-rose-600/50 border border-pink-300/40 rounded-2xl p-5 transition transform hover:scale-105 disabled:opacity-40 disabled:hover:scale-100">
+            <div class="text-4xl mb-2">⭐</div>
+            <h3 class="font-bold text-lg mb-1">Word Star Match</h3>
+            <p class="text-sm text-white/70">Find the matching tricky word</p>
+          </button>
+
+          <button onclick="startGame('flash')" ${!hasAnyTargets?'disabled':''} class="text-left bg-gradient-to-br from-amber-500/30 to-orange-600/30 hover:from-amber-500/50 hover:to-orange-600/50 border border-amber-300/40 rounded-2xl p-5 transition transform hover:scale-105 disabled:opacity-40 disabled:hover:scale-100">
+            <div class="text-4xl mb-2">⚡</div>
+            <h3 class="font-bold text-lg mb-1">Flash Cards</h3>
+            <p class="text-sm text-white/70">Self-paced review with audio</p>
+          </button>
+        </div>
+
+        <h2 class="text-xl font-bold mb-3">🎰 Star Arcade</h2>
+        <div class="bg-gradient-to-br from-purple-600/30 to-fuchsia-600/30 border border-fuchsia-300/40 rounded-2xl p-5 mb-6 fadeIn flex items-center justify-between flex-wrap gap-3">
+          <div class="flex items-center gap-3">
+            <div class="text-4xl">🎮</div>
+            <div>
+              <div class="font-bold text-lg">Tic-Tac-Toe</div>
+              <div class="text-sm text-white/70">Spend 3 ⭐ to play vs the computer</div>
+            </div>
+          </div>
+          <button onclick="enterArcade()" ${points<3?'disabled':''} class="bg-gradient-to-r from-fuchsia-500 to-purple-500 hover:scale-105 transition px-5 py-3 rounded-xl font-bold disabled:opacity-40 disabled:hover:scale-100">
+            ${points >= 3 ? `Play (3 ⭐)` : `Earn ${3-points} more ⭐`}
+          </button>
+        </div>
+
+        <details class="bg-white/5 rounded-2xl p-5">
+          <summary class="cursor-pointer font-semibold">🏆 Your word collection</summary>
+          <p class="text-xs text-white/60 mt-2 mb-3">Words and sounds you've already mastered</p>
+          <div class="flex flex-wrap gap-2">${collectionHtml}</div>
+        </details>
+      </div>
+    </div>`;
+}
+
+// ============================================================
+// GAMES
+// ============================================================
+window.startGame = (g) => {
+  state.game = { type: g, score: 0, attempts: 0, correct: 0, history: [], roundIdx: 0, totalRounds: 10, pointsAwarded: false };
+  state.view = 'game';
+  initGame();
+  render();
+};
+
+function initGame(){
+  const needs = getStudentNeeds(state.selectedStudent);
+  const g = state.game;
+  if (g.type === 'gpcMatch') {
+    g.targetPool = shuffle(needs.targetGpcs.map(x => x.gpc));
+    g.distractorPool = needs.masteredGpcs.map(x => x.gpc);
+    g.totalRounds = Math.min(10, Math.max(5, g.targetPool.length * 2));
+  } else if (g.type === 'hwHunt') {
+    g.targetPool = shuffle(needs.targetHws.map(x => x.hw));
+    g.distractorPool = needs.masteredHws.map(x => x.hw);
+    g.totalRounds = Math.min(10, Math.max(5, g.targetPool.length * 2));
+  } else if (g.type === 'flash') {
+    g.cards = shuffle([
+      ...needs.targetGpcs.map(x => ({type:'gpc', value:x.gpc})),
+      ...needs.targetHws.map(x => ({type:'hw', value:x.hw}))
+    ]);
+    g.cardIdx = 0;
+  }
+  if (g.targetPool && g.targetPool.length === 0) g.empty = true;
+  if (g.cards && g.cards.length === 0) g.empty = true;
+  if (!g.empty) newRound();
+}
+
+function newRound(){
+  const g = state.game;
+  if (!g.targetPool) return;
+  if (g.roundIdx >= g.totalRounds) { g.finished = true; return; }
+  const target = g.targetPool[g.roundIdx % g.targetPool.length];
+  let distractors = shuffle(g.distractorPool.filter(x => x !== target)).slice(0,3);
+  if (distractors.length < 3) {
+    const extra = g.targetPool.filter(x => x !== target && !distractors.includes(x));
+    while (distractors.length < 3 && extra.length) distractors.push(extra.shift());
+  }
+  while (distractors.length < 3) distractors.push('?');
+  g.currentTarget = target;
+  g.currentOptions = shuffle([target, ...distractors]);
+  g.feedback = null;
+  g._spoken = false;
+}
+
+function renderGame(app){
+  const g = state.game;
+  if (g.empty) {
+    app.innerHTML = `<div class="min-h-screen flex items-center justify-center p-4">
+      <div class="bg-white/10 backdrop-blur rounded-2xl p-8 text-center max-w-md">
+        <div class="text-5xl mb-3">🎉</div>
+        <h2 class="text-2xl font-bold mb-2">Nothing to practise!</h2>
+        <p class="text-white/70 mb-4">You've mastered everything in this category.</p>
+        <button onclick="state.view='profile'; render()" class="bg-white/20 hover:bg-white/30 px-5 py-2 rounded-xl">Back</button>
+      </div></div>`;
+    return;
+  }
+  if (g.finished) return renderGameEnd(app);
+  if (g.type === 'gpcMatch') return renderSoundPlanets(app);
+  if (g.type === 'hwHunt') return renderHeartWordHunt(app);
+  if (g.type === 'flash') return renderFlashGame(app);
+}
+
+// ----- Sound Planets (GPC matching with audio) -----
+function renderSoundPlanets(app) {
+  const g = state.game;
+  const audioOk = hasAudio(g.currentTarget);
+  const optionsHtml = g.currentOptions.map(opt => {
+    let cls = `optionBtn bg-gradient-to-br from-cyan-400 to-blue-600 rounded-full aspect-square flex items-center justify-center text-3xl md:text-5xl font-bold cursor-pointer transition transform hover:scale-105 shadow-2xl`;
+    if (g.feedback) {
+      if (opt === g.currentTarget) cls += ' ring-4 ring-green-400 scale-110';
+      else if (g.feedback.picked === opt) cls += ' ring-4 ring-red-400 opacity-50 shake';
+      else cls += ' opacity-30';
+    }
+    return `<button class="${cls}" data-option="${opt}">${opt}</button>`;
+  }).join('');
+
+  app.innerHTML = `
+    <div class="min-h-screen p-4 md:p-8">
+      <div class="max-w-4xl mx-auto">
+        <div class="flex justify-between items-center mb-4">
+          <button onclick="if(confirm('Quit this game?')){state.view='profile'; render()}" class="text-white/70 hover:text-white text-sm">← Quit</button>
+          <div class="flex gap-3 items-center text-sm">
+            <span class="bg-white/10 px-3 py-1 rounded-full">Round ${g.roundIdx+1}/${g.totalRounds}</span>
+            <span class="bg-yellow-400/20 px-3 py-1 rounded-full">⭐ ${g.score}</span>
+          </div>
+        </div>
+        <h1 class="text-2xl md:text-3xl font-bold text-center mb-1">🪐 Sound Planets</h1>
+        <p class="text-center text-white/70 mb-6">Listen and tap the matching letter sound</p>
+        <div class="text-center mb-8">
+          <button id="listenBtn" class="bg-gradient-to-r from-yellow-400 to-orange-500 hover:from-yellow-300 hover:to-orange-400 text-white font-bold px-8 py-4 rounded-2xl text-xl shadow-2xl transform hover:scale-105 transition">🔊 Listen</button>
+          ${!audioOk ? `<div class="text-xs text-white/50 mt-2">(audio missing — target: <strong>${g.currentTarget}</strong>)</div>` : ''}
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 fadeIn">${optionsHtml}</div>
+        ${g.feedback ? `<div class="mt-6 text-center fadeIn">
+          <div class="text-xl md:text-2xl font-semibold mb-3 ${g.feedback.correct ? 'text-green-300' : 'text-orange-200'}">
+            ${g.feedback.message}
+          </div>
+          <button onclick="nextRound()" class="bg-white/20 hover:bg-white/30 px-6 py-2 rounded-xl">Next →</button>
+        </div>` : ''}
+      </div>
+    </div>`;
+  attachMatchHandlers('gpc');
+}
+
+// ----- Heart Word Hunt (visual matching — no audio for heart words) -----
+function renderHeartWordHunt(app) {
+  const g = state.game;
+  const optionsHtml = g.currentOptions.map(opt => {
+    let cls = `optionBtn bg-gradient-to-br from-pink-400 to-rose-600 rounded-2xl py-8 px-4 flex items-center justify-center text-3xl md:text-4xl font-bold cursor-pointer transition transform hover:scale-105 shadow-2xl`;
+    if (g.feedback) {
+      if (opt === g.currentTarget) cls += ' ring-4 ring-green-400 scale-110';
+      else if (g.feedback.picked === opt) cls += ' ring-4 ring-red-400 opacity-50 shake';
+      else cls += ' opacity-30';
+    }
+    return `<button class="${cls}" data-option="${opt}">${opt}</button>`;
+  }).join('');
+
+  app.innerHTML = `
+    <div class="min-h-screen p-4 md:p-8">
+      <div class="max-w-4xl mx-auto">
+        <div class="flex justify-between items-center mb-4">
+          <button onclick="if(confirm('Quit this game?')){state.view='profile'; render()}" class="text-white/70 hover:text-white text-sm">← Quit</button>
+          <div class="flex gap-3 items-center text-sm">
+            <span class="bg-white/10 px-3 py-1 rounded-full">Round ${g.roundIdx+1}/${g.totalRounds}</span>
+            <span class="bg-yellow-400/20 px-3 py-1 rounded-full">⭐ ${g.score}</span>
+          </div>
+        </div>
+        <h1 class="text-2xl md:text-3xl font-bold text-center mb-1">⭐ Word Star Match</h1>
+        <p class="text-center text-white/70 mb-6">Find the word that matches</p>
+        <div class="text-center mb-8">
+          <div class="text-sm text-white/60 mb-2">Find this word:</div>
+          <div class="inline-block bg-gradient-to-br from-yellow-400 to-amber-500 text-purple-900 px-8 py-5 rounded-2xl text-4xl md:text-5xl font-bold shadow-2xl">${g.currentTarget}</div>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 fadeIn">${optionsHtml}</div>
+        ${g.feedback ? `<div class="mt-6 text-center fadeIn">
+          <div class="text-xl md:text-2xl font-semibold mb-3 ${g.feedback.correct ? 'text-green-300' : 'text-orange-200'}">
+            ${g.feedback.message}
+          </div>
+          <button onclick="nextRound()" class="bg-white/20 hover:bg-white/30 px-6 py-2 rounded-xl">Next →</button>
+        </div>` : ''}
+      </div>
+    </div>`;
+  attachMatchHandlers('hw');
+}
+
+function attachMatchHandlers(type) {
+  const g = state.game;
+  setTimeout(() => {
+    const optionBtns = document.querySelectorAll('.optionBtn');
+    optionBtns.forEach(btn => {
+      btn.addEventListener('click', () => pickOption(btn.getAttribute('data-option'), type));
+    });
+    const listenBtn = $('listenBtn');
+    if (listenBtn) listenBtn.addEventListener('click', () => speak(g.currentTarget));
+    if (!g.feedback && !g._spoken && type === 'gpc') {
+      g._spoken = true;
+      setTimeout(() => speak(g.currentTarget), 400);
+    }
+  }, 0);
+}
+
+window.pickOption = (opt, type) => {
+  const g = state.game;
+  if (g.feedback) return;
+  const correct = opt === g.currentTarget;
+  g.attempts++;
+  if (correct) {
+    g.correct++; g.score += 10;
+    correctSound(); confetti();
+    g.feedback = { picked: opt, correct: true, message: correctFeedback(g.currentTarget, type) };
+  } else {
+    wrongSound();
+    g.feedback = { picked: opt, correct: false, message: wrongFeedback(g.currentTarget, type) };
+    if (type === 'gpc') setTimeout(() => speak(g.currentTarget), 200);
+  }
+  g.history.push({ target: g.currentTarget, picked: opt, correct, type });
+  render();
+};
+
+window.nextRound = () => {
+  state.game.roundIdx++;
+  newRound();
+  render();
+};
+
+// ----- Flash Cards -----
+function renderFlashGame(app){
+  const g = state.game;
+  if (g.cardIdx >= g.cards.length) { g.finished = true; return renderGameEnd(app); }
+  const card = g.cards[g.cardIdx];
+  const audioOk = card.type === 'gpc' && hasAudio(card.value);
+  const colorClass = card.type === 'gpc' ? 'from-cyan-400 to-blue-600' : 'from-pink-400 to-rose-600';
+
+  app.innerHTML = `
+    <div class="min-h-screen p-4 md:p-8 flex flex-col">
+      <div class="flex justify-between items-center mb-4 max-w-3xl mx-auto w-full">
+        <button onclick="state.view='profile'; render()" class="text-white/70 hover:text-white text-sm">← Quit</button>
+        <span class="bg-white/10 px-3 py-1 rounded-full text-sm">${g.cardIdx+1}/${g.cards.length}</span>
+      </div>
+      <div class="flex-1 flex flex-col items-center justify-center max-w-3xl mx-auto w-full">
+        <div class="text-center text-white/60 text-sm mb-2">${card.type==='gpc'?'Letter sound':'Heart word'}</div>
+        <button id="cardBtn" class="bg-gradient-to-br ${colorClass} rounded-3xl p-12 md:p-16 mb-6 shadow-2xl hover:scale-105 transition floaty">
+          <div class="text-7xl md:text-9xl font-bold">${card.value}</div>
+          ${audioOk ? '<div class="mt-4 text-sm text-white/80">🔊 Tap to hear</div>' : '<div class="mt-4 text-sm text-white/70">Read it out loud!</div>'}
+        </button>
+        <div class="flex gap-3">
+          <button onclick="flashAnswer(false)" class="bg-orange-500/40 hover:bg-orange-500/60 border border-orange-300 px-6 py-3 rounded-xl font-semibold">🤔 Tricky</button>
+          <button onclick="flashAnswer(true)" class="bg-green-500/40 hover:bg-green-500/60 border border-green-300 px-6 py-3 rounded-xl font-semibold">✅ Got it!</button>
+        </div>
+      </div>
+    </div>`;
+  setTimeout(() => {
+    const cardBtn = $('cardBtn');
+    if (cardBtn && audioOk) cardBtn.addEventListener('click', () => speak(card.value));
+    if (!g._spoken && audioOk) { g._spoken = true; setTimeout(() => speak(card.value), 300); }
+  }, 0);
+}
+
+window.flashAnswer = (got) => {
+  const g = state.game;
+  const card = g.cards[g.cardIdx];
+  g.history.push({ target: card.value, type: card.type, correct: got });
+  g.attempts++;
+  if (got) { g.correct++; g.score += 10; correctSound(); }
+  else { wrongSound(); }
+  g.cardIdx++;
+  g._spoken = false;
+  if (g.cardIdx >= g.cards.length) g.finished = true;
+  render();
+};
+
+// ----- Game end + award points -----
+function renderGameEnd(app){
+  const g = state.game;
+  const pct = g.attempts ? Math.round(g.correct/g.attempts*100) : 0;
+  let msg, emoji;
+  if (pct >= 90) { msg = "Outstanding work!"; emoji = "🏆"; }
+  else if (pct >= 70) { msg = "Strong effort!"; emoji = "⭐"; }
+  else if (pct >= 50) { msg = "You're learning — keep going!"; emoji = "💪"; }
+  else { msg = "Good practice. Let's try again."; emoji = "🌱"; }
+
+  // Award 1 point per correct answer (once)
+  if (!g.pointsAwarded) {
+    addPoints(state.selectedStudent, g.correct);
+    g.pointsAwarded = true;
+    if (g.correct > 0) setTimeout(celebrateSound, 100);
+  }
+
+  const wrongItems = g.history.filter(h => !h.correct);
+  const wrongHtml = wrongItems.length
+    ? `<div class="mt-4"><div class="text-sm text-white/60 mb-2">Items to practise more:</div><div class="flex flex-wrap gap-2 justify-center">${wrongItems.map(w => `<span class="px-3 py-1 bg-orange-500/30 rounded-full">${w.target}</span>`).join('')}</div></div>`
+    : `<div class="mt-4 text-green-200">Every single one correct! 🌟</div>`;
+
+  const totalStars = getPoints(state.selectedStudent);
+
+  app.innerHTML = `
+    <div class="min-h-screen flex items-center justify-center p-4">
+      <div class="bg-white/10 backdrop-blur border border-white/20 rounded-3xl p-8 max-w-lg w-full text-center fadeIn">
+        <div class="text-7xl mb-4">${emoji}</div>
+        <h2 class="text-3xl font-bold mb-1">${msg}</h2>
+        <p class="text-white/70 mb-6">${state.selectedStudent}</p>
+        <div class="grid grid-cols-3 gap-3 mb-4">
+          <div class="bg-white/10 rounded-xl p-3"><div class="text-2xl font-bold">+${g.correct}</div><div class="text-xs text-white/70">stars earned</div></div>
+          <div class="bg-white/10 rounded-xl p-3"><div class="text-2xl font-bold">${g.correct}/${g.attempts}</div><div class="text-xs text-white/70">correct</div></div>
+          <div class="bg-yellow-400/20 rounded-xl p-3"><div class="text-2xl font-bold">⭐ ${totalStars}</div><div class="text-xs text-white/70">total</div></div>
+        </div>
+        ${wrongHtml}
+        <div class="flex gap-3 mt-6 justify-center flex-wrap">
+          <button onclick="startGame('${g.type}')" class="bg-white/20 hover:bg-white/30 px-5 py-2 rounded-xl">Play again</button>
+          <button onclick="state.view='profile'; render()" class="bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 px-5 py-2 rounded-xl font-semibold">Back to games</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+// ============================================================
+// ARCADE — Tic-Tac-Toe (3 points per play)
+// ============================================================
+window.enterArcade = () => {
+  const name = state.selectedStudent;
+  if (!spendPoints(name, 3)) {
+    alert(`You need 3 ⭐ to play. You have ${getPoints(name)}.`);
+    return;
+  }
+  state.arcade = { board: Array(9).fill(null), playerTurn: true, winner: null, finished: false, winLine: null };
+  state.view = 'arcade';
+  render();
+};
+
+window.arcadeMove = (idx) => {
+  const a = state.arcade;
+  if (a.finished || a.board[idx] || !a.playerTurn) return;
+  a.board[idx] = 'X';
+  a.playerTurn = false;
+  const winInfo = checkWin(a.board);
+  if (winInfo || !a.board.includes(null)) {
+    if (winInfo) { a.winner = winInfo.player; a.winLine = winInfo.line; correctSound(); confetti(); setTimeout(celebrateSound, 200); }
+    a.finished = true;
+    render();
+    return;
+  }
+  render();
+  setTimeout(() => {
+    const aiMove = getAIMove(a.board);
+    if (aiMove !== -1) a.board[aiMove] = 'O';
+    const w2 = checkWin(a.board);
+    if (w2 || !a.board.includes(null)) {
+      if (w2) { a.winner = w2.player; a.winLine = w2.line; wrongSound(); }
+      a.finished = true;
+    }
+    a.playerTurn = true;
+    render();
+  }, 600);
+};
+
+function checkWin(b) {
+  const lines = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+  for (const line of lines) {
+    const [x,y,z] = line;
+    if (b[x] && b[x] === b[y] && b[x] === b[z]) return { player: b[x], line };
+  }
+  return null;
+}
+
+function getAIMove(board) {
+  // 35% chance to play randomly (so kids can win)
+  if (Math.random() < 0.35) {
+    const empty = board.map((v,i) => v ? null : i).filter(i => i !== null);
+    return empty.length ? empty[Math.floor(Math.random() * empty.length)] : -1;
+  }
+  // Try to win
+  for (let i = 0; i < 9; i++) {
+    if (!board[i]) {
+      const test = [...board]; test[i] = 'O';
+      if (checkWin(test)) return i;
+    }
+  }
+  // Block player
+  for (let i = 0; i < 9; i++) {
+    if (!board[i]) {
+      const test = [...board]; test[i] = 'X';
+      if (checkWin(test)) return i;
+    }
+  }
+  if (!board[4]) return 4;
+  const corners = [0,2,6,8].filter(i => !board[i]);
+  if (corners.length) return corners[Math.floor(Math.random()*corners.length)];
+  const empty = board.map((v,i) => v ? null : i).filter(i => i !== null);
+  return empty.length ? empty[Math.floor(Math.random() * empty.length)] : -1;
+}
+
+function renderArcade(app) {
+  const a = state.arcade;
+  const name = state.selectedStudent;
+  const points = getPoints(name);
+
+  let resultMessage = '';
+  if (a.finished) {
+    if (a.winner === 'X') resultMessage = `<div class="text-3xl font-bold text-yellow-300 mb-3">🎉 You won!</div>`;
+    else if (a.winner === 'O') resultMessage = `<div class="text-2xl font-bold text-white/80 mb-3">Computer won this time. Try again!</div>`;
+    else resultMessage = `<div class="text-2xl font-bold text-white/80 mb-3">It's a draw! 🤝</div>`;
+  }
+
+  const board = a.board.map((cell, i) => {
+    const inWinLine = a.winLine && a.winLine.includes(i);
+    const symbol = cell === 'X' ? `<span class="text-pink-300">✕</span>` : cell === 'O' ? `<span class="text-cyan-300">○</span>` : '';
+    const highlight = inWinLine ? 'ring-4 ring-yellow-400 bg-yellow-400/20' : 'bg-white/10 hover:bg-white/20';
+    const disabled = a.finished || cell || !a.playerTurn;
+    return `<button onclick="arcadeMove(${i})" ${disabled ? 'disabled' : ''} class="aspect-square ${highlight} disabled:hover:bg-white/10 rounded-2xl text-6xl md:text-8xl font-bold flex items-center justify-center transition shadow-lg">${symbol}</button>`;
+  }).join('');
+
+  app.innerHTML = `
+    <div class="min-h-screen p-4 md:p-8 flex flex-col">
+      <div class="max-w-xl mx-auto w-full flex-1 flex flex-col">
+        <div class="flex justify-between items-center mb-4">
+          <button onclick="state.view='profile'; render()" class="text-white/70 hover:text-white text-sm">← Back</button>
+          <span class="bg-yellow-400/20 px-3 py-1 rounded-full text-sm">⭐ ${points} stars</span>
+        </div>
+        <h1 class="text-3xl font-bold text-center mb-1">🎰 Star Arcade</h1>
+        <p class="text-center text-white/70 mb-6">Tic-Tac-Toe • You are <span class="text-pink-300 font-bold">✕</span></p>
+        <div class="text-center mb-4 min-h-[3rem]">${resultMessage}</div>
+        <div class="grid grid-cols-3 gap-3 mb-6 max-w-md mx-auto w-full">${board}</div>
+        <div class="text-center">
+          ${a.finished ? `
+            ${points >= 3 ? `<button onclick="enterArcade()" class="bg-gradient-to-r from-pink-500 to-purple-600 hover:scale-105 transition px-6 py-3 rounded-xl font-semibold mr-2">Play again (3 ⭐)</button>` : `<div class="text-white/60 text-sm mb-3">Earn more stars by playing reading games</div>`}
+            <button onclick="state.view='profile'; render()" class="bg-white/10 hover:bg-white/20 px-5 py-3 rounded-xl">Back to games</button>
+          ` : a.playerTurn ? `<div class="text-white/70 text-sm">Your turn!</div>` : `<div class="text-white/70 text-sm">Computer thinking...</div>`}
+        </div>
+      </div>
+    </div>`;
+}
+
+// Confetti
+function confetti() {
+  const colors = ['#f87171','#fbbf24','#34d399','#60a5fa','#a78bfa','#f472b6'];
+  for (let i=0; i<30; i++) {
+    const c = document.createElement('div');
+    c.className = 'confetti';
+    c.style.background = colors[i % colors.length];
+    c.style.left = (Math.random()*100) + '%';
+    c.style.animationDelay = (Math.random()*0.5) + 's';
+    document.body.appendChild(c);
+    setTimeout(() => c.remove(), 2500);
+  }
+}
+
+render();
+</script>
+</body>
+</html>

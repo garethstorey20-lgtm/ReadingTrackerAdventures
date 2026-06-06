@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Reading Adventure — Personalised Games</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap');
+body { font-family: 'Fredoka', system-ui, sans-serif; }
+.star { position: absolute; background: white; border-radius: 50%; opacity: 0.6; animation: twinkle 3s infinite; }
+@keyframes twinkle { 0%,100%{opacity:0.3;} 50%{opacity:1;} }
+@keyframes pop { 0%{transform:scale(1);} 50%{transform:scale(1.2);} 100%{transform:scale(1);} }
+.pop { animation: pop 0.4s ease-out; }
+@keyframes shake { 0%,100%{transform:translateX(0);} 25%{transform:translateX(-8px);} 75%{transform:translateX(8px);} }
+.shake { animation: shake 0.4s; }
+@keyframes float { 0%,100%{transform:translateY(0);} 50%{transform:translateY(-12px);} }
+.floaty { animation: float 3s infinite ease-in-out; }
+@keyframes fadeIn { from{opacity:0;transform:translateY(10px);} to{opacity:1;transform:translateY(0);} }
+.fadeIn { animation: fadeIn 0.4s ease-out; }
+@keyframes confetti { 0%{transform:translateY(-100vh) rotate(0deg);opacity:1;} 100%{transform:translateY(100vh) rotate(720deg);opacity:0;} }
+.confetti { position:fixed; width:10px; height:10px; pointer-events:none; animation: confetti 2s linear forwards; z-index: 100; }
+</style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-fuchsia-900 text-white">
+<div id="stars" class="fixed inset-0 pointer-events-none overflow-hidden"></div>
+<div id="app" class="relative z-10"></div>
+
+<script>
+// Background stars
+(function makeStars() {
+  const c = document.getElementById('stars');
+  for (let i=0; i<60; i++) {
+    const s = document.createElement('div');
+    s.className = 'star';
+    s.style.width = (Math.random()*3+1) + 'px';
+    s.style.height = s.style.width;
+    s.style.left = Math.random()*100 + '%';
+    s.style.top = Math.random()*100 + '%';
+    s.style.animationDelay = (Math.random()*3) + 's';
+    c.appendChild(s);
+  }
+})();
+
+const state = {
+  data: null,
+  classKey: null,
+  view: 'upload',
+  selectedStudent: null,
+  game: null,
+};
+
+function $(id){return document.getElementById(id);}
+
+function speak(text) {
+  if (!('speechSynthesis' in window)) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 0.85;
+  u.pitch = 1;
+  u.lang = 'en-GB';
+  speechSynthesis.speak(u);
+}
+
+function beep(freq, dur, type='sine', vol=0.2) {
+  try {
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ac.createOscillator();
+    const g = ac.createGain();
+    o.connect(g); g.connect(ac.destination);
+    o.type = type;
+    o.frequency.value = freq;
+    g.gain.value = vol;
+    o.start();
+    g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
+    o.stop(ac.currentTime + dur);
+  } catch(e){}
+}
+function correctSound(){ beep(660,0.12); setTimeout(()=>beep(990,0.18),100);}
+function wrongSound(){ beep(220,0.25, 'square', 0.15); }
+function celebrateSound(){ beep(523,0.1); setTimeout(()=>beep(659,0.1),100); setTimeout(()=>beep(784,0.2),200);}
+
+function shuffle(arr){ const a=[...arr]; for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a;}
+
+function getStudentNeeds(studentName) {
+  const cls = state.data.classes[state.classKey];
+  const cps = cls.checkpoints || [];
+  const sorted = [...cps].sort((a,b) => new Date(b.date) - new Date(a.date));
+  const latest = sorted[0];
+  let assessment, coveredUnits, label;
+  if (latest && cls.assessments.checkpoints && cls.assessments.checkpoints[latest.id] && cls.assessments.checkpoints[latest.id][studentName]) {
+    assessment = cls.assessments.checkpoints[latest.id][studentName];
+    coveredUnits = latest.units;
+    label = latest.label;
+  } else {
+    assessment = cls.assessments.baseline[studentName];
+    coveredUnits = cls.units.map((_,i)=>i);
+    label = 'Baseline';
+  }
+  const result = {
+    targetGpcs: [], targetHws: [], masteredGpcs: [], masteredHws: [],
+    assessment, label, coveredUnits
+  };
+  coveredUnits.forEach(uIdx => {
+    const unit = cls.units[uIdx];
+    const aUnit = assessment.units[uIdx];
+    unit.gpcs.forEach((gpc, i) => {
+      const item = { gpc, unitIdx: uIdx, unit: unit.name };
+      if (aUnit.gpcs[i] === 1) result.masteredGpcs.push(item);
+      else result.targetGpcs.push(item);
+    });
+    unit.heartWords.forEach((hw, i) => {
+      const item = { hw, unitIdx: uIdx, unit: unit.name };
+      if (aUnit.hws[i] === 1) result.masteredHws.push(item);
+      else result.targetHws.push(item);
+    });
+  });
+  // Dedupe target heart words across units (some appear in multiple)
+  const seenHw = new Set();
+  result.targetHws = result.targetHws.filter(x => {
+    if (seenHw.has(x.hw)) return false; seenHw.add(x.hw); return true;
+  });
+  const seenMHw = new Set();
+  result.masteredHws = result.masteredHws.filter(x => {
+    if (seenMHw.has(x.hw)) return false; seenMHw.add(x.hw); return true;
+  });
+  return result;
+}
+
+function render(){
+  const app = $('app');
+  if (state.view==='upload') return renderUpload(app);
+  if (state.view==='dashboard') return renderDashboard(app);
+  if (state.view==='profile') return renderProfile(app);
+  if (state.view==='game') return renderGame(app);
+}
+
+function renderUpload(app){
+  app.innerHTML = `
+    <div class="min-h-screen flex items-center justify-center p-4">
+      <div class="bg-white/10 backdrop-blur-md border border-white/20 rounded-3xl p-8 md:p-12 max-w-2xl w-full text-center shadow-2xl fadeIn">
+        <div class="text-6xl mb-4 floaty">🚀</div>
+        <h1 class="text-4xl md:text-5xl font-bold mb-3">Reading Adventure</h1>
+        <p class="text-lg text-white/80 mb-8">Upload your class data to launch personalised reading games for each student.</p>
+        <label class="block">
+          <input type="file" accept=".json" id="fileInput" class="hidden">
+          <span id="dropZone" class="block cursor-pointer border-2 border-dashed border-white/40 hover:border-white hover:bg-white/10 rounded-2xl p-10 transition">
+            <div class="text-5xl mb-3">📁</div>
+            <div class="font-semibold mb-1">Click to choose a JSON file</div>
+            <div class="text-sm text-white/60">or drag and drop your assessment data here</div>
+          </span>
+        </label>
+        <div id="uploadMsg" class="mt-4 text-yellow-200"></div>
+        <details class="mt-8 text-left text-sm text-white/70">
+          <summary class="cursor-pointer hover:text-white">How it works</summary>
+          <p class="mt-2">This app reads your exported JSON file (with class, units, and assessment results), uses the most recent checkpoint per student to identify which letter sounds (GPCs) and tricky 'heart words' each child hasn't mastered yet, then auto-generates games targeting just those items. Distractors are drawn from already-mastered items so children can compare known vs. learning items.</p>
+        </details>
+      </div>
+    </div>`;
+  const input = $('fileInput');
+  const dz = $('dropZone');
+  input.addEventListener('change', e => loadFile(e.target.files[0]));
+  ['dragover','dragenter'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('bg-white/10','border-white');}));
+  ['dragleave','drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('bg-white/10','border-white');}));
+  dz.addEventListener('drop', e => { if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);});
+}
+
+function loadFile(file){
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (!data.classes) throw new Error('Invalid format: no classes found');
+      state.data = data;
+      state.classKey = data.activeClass || Object.keys(data.classes)[0];
+      state.view = 'dashboard';
+      render();
+    } catch(err) {
+      $('uploadMsg').textContent = 'Could not read file: ' + err.message;
+    }
+  };
+  reader.readAsText(file);
+}
+
+function renderDashboard(app){
+  const cls = state.data.classes[state.classKey];
+  const students = cls.students;
+  let cards = '';
+  students.forEach(name => {
+    const needs = getStudentNeeds(name);
+    const totalGpcs = needs.targetGpcs.length + needs.masteredGpcs.length;
+    const totalHws = needs.targetHws.length + needs.masteredHws.length;
+    const gpcPct = totalGpcs ? Math.round((needs.masteredGpcs.length / totalGpcs)*100) : 0;
+    const hwPct = totalHws ? Math.round((needs.masteredHws.length / totalHws)*100) : 0;
+    cards += `
+      <button onclick="selectStudent('${name}')" class="text-left bg-white/10 hover:bg-white/20 backdrop-blur border border-white/20 rounded-2xl p-5 transition shadow-lg hover:scale-105">
+        <div class="flex items-center gap-3 mb-3">
+          <div class="w-12 h-12 rounded-full bg-gradient-to-br from-pink-400 to-purple-500 flex items-center justify-center font-bold text-lg flex-shrink-0">${name.replace('Student ','')}</div>
+          <div class="flex-1 min-w-0">
+            <div class="font-semibold truncate">${name}</div>
+            <div class="text-xs text-white/60">${needs.targetGpcs.length + needs.targetHws.length} items to practise</div>
+          </div>
+        </div>
+        <div class="space-y-2">
+          <div>
+            <div class="flex justify-between text-xs mb-1"><span>Letter sounds</span><span>${gpcPct}%</span></div>
+            <div class="h-2 bg-white/10 rounded-full overflow-hidden"><div class="h-full bg-gradient-to-r from-cyan-400 to-blue-500" style="width:${gpcPct}%"></div></div>
+          </div>
+          <div>
+            <div class="flex justify-between text-xs mb-1"><span>Heart words</span><span>${hwPct}%</span></div>
+            <div class="h-2 bg-white/10 rounded-full overflow-hidden"><div class="h-full bg-gradient-to-r from-pink-400 to-rose-500" style="width:${hwPct}%"></div></div>
+          </div>
+        </div>
+      </button>`;
+  });
+  app.innerHTML = `
+    <div class="min-h-screen p-4 md:p-8">
+      <header class="max-w-6xl mx-auto mb-8 flex items-center justify-between flex-wrap gap-4">
+        <div>
+          <h1 class="text-2xl md:text-4xl font-bold">${state.classKey}</h1>
+          <p class="text-white/70 text-sm">Tap a student to launch their personalised games</p>
+        </div>
+        <button onclick="state.view='upload'; render()" class="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-xl text-sm">📁 New file</button>
+      </header>
+      <div class="max-w-6xl mx-auto grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 fadeIn">${cards}</div>
+    </div>`;
+}
+
+window.selectStudent = (name) => {
+  state.selectedStudent = name;
+  state.view = 'profile';
+  render();
+};
+
+function renderProfile(app){
+  const name = state.selectedStudent;
+  const needs = getStudentNeeds(name);
+  const targetGpcsHtml = needs.targetGpcs.length 
+    ? needs.targetGpcs.map(x => `<span class="px-3 py-1 bg-orange-500/30 border border-orange-300/40 rounded-full text-sm">${x.gpc}</span>`).join('')
+    : `<div class="text-green-200 italic">All letter sounds mastered! 🎉</div>`;
+  const targetHwsHtml = needs.targetHws.length
+    ? needs.targetHws.map(x => `<span class="px-3 py-1 bg-pink-500/30 border border-pink-300/40 rounded-full text-sm">${x.hw}</span>`).join('')
+    : `<div class="text-green-200 italic">All heart words mastered! 🎉</div>`;
+  const masteredGpcsHtml = needs.masteredGpcs.map(x => `<span class="px-2 py-1 bg-green-500/20 rounded-md text-xs">${x.gpc}</span>`).join(' ');
+  const masteredHwsHtml = needs.masteredHws.map(x => `<span class="px-2 py-1 bg-green-500/20 rounded-md text-xs">${x.hw}</span>`).join(' ');
+  app.innerHTML = `
+    <div class="min-h-screen p-4 md:p-8">
+      <div class="max-w-5xl mx-auto">
+        <button onclick="state.view='dashboard'; render()" class="text-white/70 hover:text-white mb-4 text-sm">← Back to class</button>
+        <header class="bg-white/10 backdrop-blur border border-white/20 rounded-2xl p-6 mb-6 fadeIn">
+          <div class="flex items-center gap-4 mb-4">
+            <div class="w-16 h-16 rounded-full bg-gradient-to-br from-pink-400 to-purple-500 flex items-center justify-center font-bold text-xl flex-shrink-0">${name.replace('Student ','')}</div>
+            <div>
+              <h1 class="text-2xl md:text-3xl font-bold">${name}</h1>
+              <p class="text-white/70 text-sm">Latest data: ${needs.label}</p>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
+            <div class="bg-white/5 rounded-xl p-3"><div class="text-2xl font-bold text-orange-300">${needs.targetGpcs.length}</div><div class="text-xs text-white/70">GPCs to learn</div></div>
+            <div class="bg-white/5 rounded-xl p-3"><div class="text-2xl font-bold text-pink-300">${needs.targetHws.length}</div><div class="text-xs text-white/70">Heart words to learn</div></div>
+            <div class="bg-white/5 rounded-xl p-3"><div class="text-2xl font-bold text-green-300">${needs.masteredGpcs.length}</div><div class="text-xs text-white/70">GPCs mastered</div></div>
+            <div class="bg-white/5 rounded-xl p-3"><div class="text-2xl font-bold text-green-300">${needs.masteredHws.length}</div><div class="text-xs text-white/70">Heart words mastered</div></div>
+          </div>
+        </header>
+        <div class="grid md:grid-cols-2 gap-4 mb-6 fadeIn">
+          <div class="bg-white/10 backdrop-blur border border-orange-300/30 rounded-2xl p-5">
+            <h2 class="font-bold mb-3 flex items-center gap-2">🎯 Target letter sounds</h2>
+            <div class="flex flex-wrap gap-2">${targetGpcsHtml}</div>
+          </div>
+          <div class="bg-white/10 backdrop-blur border border-pink-300/30 rounded-2xl p-5">
+            <h2 class="font-bold mb-3 flex items-center gap-2">💖 Target heart words</h2>
+            <div class="flex flex-wrap gap-2">${targetHwsHtml}</div>
+          </div>
+        </div>
+        <h2 class="text-xl font-bold mb-3">Choose a game</h2>
+        <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6 fadeIn">
+          <button onclick="startGame('gpcMatch')" ${!needs.targetGpcs.length?'disabled':''} class="text-left bg-gradient-to-br from-cyan-500/30 to-blue-600/30 hover:from-cyan-500/50 hover:to-blue-600/50 border border-cyan-300/40 rounded-2xl p-5 transition transform hover:scale-105 disabled:opacity-40 disabled:hover:scale-100">
+            <div class="text-4xl mb-2">🪐</div>
+            <h3 class="font-bold text-lg mb-1">Sound Planets</h3>
+            <p class="text-sm text-white/70">Listen and tap the matching letter sound</p>
+            <div class="mt-3 text-xs text-cyan-200">${needs.targetGpcs.length} target sounds</div>
+          </button>
+          <button onclick="startGame('hwHunt')" ${!needs.targetHws.length?'disabled':''} class="text-left bg-gradient-to-br from-pink-500/30 to-rose-600/30 hover:from-pink-500/50 hover:to-rose-600/50 border border-pink-300/40 rounded-2xl p-5 transition transform hover:scale-105 disabled:opacity-40 disabled:hover:scale-100">
+            <div class="text-4xl mb-2">⭐</div>
+            <h3 class="font-bold text-lg mb-1">Heart Word Hunt</h3>
+            <p class="text-sm text-white/70">Catch the heart word you hear among the stars</p>
+            <div class="mt-3 text-xs text-pink-200">${needs.targetHws.length} target words</div>
+          </button>
+          <button onclick="startGame('flash')" ${!(needs.targetGpcs.length+needs.targetHws.length)?'disabled':''} class="text-left bg-gradient-to-br from-amber-500/30 to-orange-600/30 hover:from-amber-500/50 hover:to-orange-600/50 border border-amber-300/40 rounded-2xl p-5 transition transform hover:scale-105 disabled:opacity-40 disabled:hover:scale-100">
+            <div class="text-4xl mb-2">⚡</div>
+            <h3 class="font-bold text-lg mb-1">Flash Cards</h3>
+            <p class="text-sm text-white/70">Self-paced review with audio support</p>
+            <div class="mt-3 text-xs text-amber-200">${needs.targetGpcs.length + needs.targetHws.length} items</div>
+          </button>
+        </div>
+        <details class="bg-white/5 rounded-2xl p-5">
+          <summary class="cursor-pointer font-semibold">Mastered so far</summary>
+          <div class="mt-3">
+            <div class="text-sm text-white/70 mb-1">GPCs:</div>
+            <div class="flex flex-wrap gap-1 mb-3">${masteredGpcsHtml || '<em class="text-white/50">None yet</em>'}</div>
+            <div class="text-sm text-white/70 mb-1">Heart words:</div>
+            <div class="flex flex-wrap gap-1">${masteredHwsHtml || '<em class="text-white/50">None yet</em>'}</div>
+          </div>
+        </details>
+      </div>
+    </div>`;
+}
+
+window.startGame = (g) => {
+  state.game = { type: g, score: 0, attempts: 0, correct: 0, history: [], roundIdx: 0, totalRounds: 10 };
+  state.view = 'game';
+  initGame();
+  render();
+};
+
+function initGame(){
+  const needs = getStudentNeeds(state.selectedStudent);
+  const g = state.game;
+  if (g.type === 'gpcMatch') {
+    g.targetPool = shuffle(needs.targetGpcs.map(x => x.gpc));
+    g.distractorPool = needs.masteredGpcs.map(x => x.gpc);
+    g.totalRounds = Math.min(10, Math.max(5, g.targetPool.length * 2));
+  } else if (g.type === 'hwHunt') {
+    g.targetPool = shuffle(needs.targetHws.map(x => x.hw));
+    g.distractorPool = needs.masteredHws.map(x => x.hw);
+    g.totalRounds = Math.min(10, Math.max(5, g.targetPool.length * 2));
+  } else if (g.type === 'flash') {
+    g.cards = shuffle([
+      ...needs.targetGpcs.map(x => ({type:'gpc', value:x.gpc})),
+      ...needs.targetHws.map(x => ({type:'hw', value:x.hw}))
+    ]);
+    g.cardIdx = 0;
+  }
+  if (g.targetPool && g.targetPool.length === 0) g.empty = true;
+  if (g.cards && g.cards.length === 0) g.empty = true;
+  if (!g.empty) newRound();
+}
+
+function newRound(){
+  const g = state.game;
+  if (!g.targetPool) return;
+  if (g.roundIdx >= g.totalRounds) { g.finished = true; return; }
+  const target = g.targetPool[g.roundIdx % g.targetPool.length];
+  let distractors = shuffle(g.distractorPool.filter(x => x !== target)).slice(0,3);
+  if (distractors.length < 3) {
+    const extra = g.targetPool.filter(x => x !== target && !distractors.includes(x));
+    while (distractors.length < 3 && extra.length) distractors.push(extra.shift());
+  }
+  while (distractors.length < 3) distractors.push('?');
+  g.currentTarget = target;
+  g.currentOptions = shuffle([target, ...distractors]);
+  g.feedback = null;
+  g._spoken = false;
+}
+
+function renderGame(app){
+  const g = state.game;
+  if (g.empty) {
+    app.innerHTML = `<div class="min-h-screen flex items-center justify-center p-4">
+      <div class="bg-white/10 backdrop-blur rounded-2xl p-8 text-center max-w-md">
+        <div class="text-5xl mb-3">🎉</div>
+        <h2 class="text-2xl font-bold mb-2">Nothing to practise!</h2>
+        <p class="text-white/70 mb-4">${state.selectedStudent} has mastered everything in this category.</p>
+        <button onclick="state.view='profile'; render()" class="bg-white/20 hover:bg-white/30 px-5 py-2 rounded-xl">Back</button>
+      </div></div>`;
+    return;
+  }
+  if (g.finished) return renderGameEnd(app);
+  if (g.type === 'gpcMatch' || g.type === 'hwHunt') return renderMatchGame(app);
+  if (g.type === 'flash') return renderFlashGame(app);
+}
+
+function renderMatchGame(app){
+  const g = state.game;
+  const isGpc = g.type === 'gpcMatch';
+  const title = isGpc ? '🪐 Sound Planets' : '⭐ Heart Word Hunt';
+  const prompt = isGpc ? 'Listen and tap the planet with the matching sound' : 'Listen and tap the star with the matching word';
+  const itemBg = isGpc ? 'from-cyan-400 to-blue-600' : 'from-pink-400 to-rose-600';
+  const itemShape = isGpc ? 'rounded-full' : 'rounded-2xl';
+  let optionsHtml = g.currentOptions.map((opt, i) => {
+    let cls = `bg-gradient-to-br ${itemBg} ${itemShape} aspect-square flex items-center justify-center text-3xl md:text-5xl font-bold cursor-pointer transition transform hover:scale-105 shadow-2xl`;
+    if (g.feedback) {
+      if (opt === g.currentTarget) cls += ' ring-4 ring-green-400 scale-110';
+      else if (g.feedback.picked === opt) cls += ' ring-4 ring-red-400 opacity-50 shake';
+      else cls += ' opacity-30';
+    }
+    return `<button onclick="pickOption('${opt}')" class="${cls}">${opt}</button>`;
+  }).join('');
+  app.innerHTML = `
+    <div class="min-h-screen p-4 md:p-8">
+      <div class="max-w-4xl mx-auto">
+        <div class="flex justify-between items-center mb-4">
+          <button onclick="if(confirm('Quit this round?')){state.view='profile'; render()}" class="text-white/70 hover:text-white text-sm">← Quit</button>
+          <div class="flex gap-3 items-center text-sm">
+            <span class="bg-white/10 px-3 py-1 rounded-full">Round ${g.roundIdx+1}/${g.totalRounds}</span>
+            <span class="bg-yellow-400/20 px-3 py-1 rounded-full">⭐ ${g.score}</span>
+          </div>
+        </div>
+        <h1 class="text-2xl md:text-3xl font-bold text-center mb-1">${title}</h1>
+        <p class="text-center text-white/70 mb-6">${prompt}</p>
+        <div class="text-center mb-8">
+          <button onclick="speak('${g.currentTarget}')" class="bg-gradient-to-r from-yellow-400 to-orange-500 hover:from-yellow-300 hover:to-orange-400 text-white font-bold px-8 py-4 rounded-2xl text-xl shadow-2xl transform hover:scale-105 transition">🔊 Listen</button>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 fadeIn">${optionsHtml}</div>
+        ${g.feedback ? `<div class="mt-6 text-center fadeIn">
+          <div class="text-2xl font-bold mb-3 ${g.feedback.correct ? 'text-green-300' : 'text-orange-200'}">
+            ${g.feedback.correct ? '🎉 Brilliant!' : `It was "${g.currentTarget}"`}
+          </div>
+          <button onclick="nextRound()" class="bg-white/20 hover:bg-white/30 px-6 py-2 rounded-xl">Next →</button>
+        </div>` : ''}
+      </div>
+    </div>`;
+  if (!g.feedback && !g._spoken) {
+    g._spoken = true;
+    setTimeout(() => speak(g.currentTarget), 400);
+  }
+}
+
+window.pickOption = (opt) => {
+  const g = state.game;
+  if (g.feedback) return;
+  const correct = opt === g.currentTarget;
+  g.feedback = { picked: opt, correct };
+  g.attempts++;
+  if (correct) {
+    g.correct++; g.score += 10;
+    correctSound(); confetti();
+  } else {
+    wrongSound();
+    setTimeout(() => speak(g.currentTarget), 200);
+  }
+  g.history.push({ target: g.currentTarget, picked: opt, correct });
+  render();
+};
+
+window.nextRound = () => {
+  state.game.roundIdx++;
+  newRound();
+  render();
+};
+
+function renderFlashGame(app){
+  const g = state.game;
+  if (g.cardIdx >= g.cards.length) { g.finished = true; return renderGameEnd(app); }
+  const card = g.cards[g.cardIdx];
+  const colorClass = card.type === 'gpc' ? 'from-cyan-400 to-blue-600' : 'from-pink-400 to-rose-600';
+  app.innerHTML = `
+    <div class="min-h-screen p-4 md:p-8 flex flex-col">
+      <div class="flex justify-between items-center mb-4 max-w-3xl mx-auto w-full">
+        <button onclick="state.view='profile'; render()" class="text-white/70 hover:text-white text-sm">← Quit</button>
+        <span class="bg-white/10 px-3 py-1 rounded-full text-sm">${g.cardIdx+1}/${g.cards.length}</span>
+      </div>
+      <div class="flex-1 flex flex-col items-center justify-center max-w-3xl mx-auto w-full">
+        <div class="text-center text-white/60 text-sm mb-2">${card.type==='gpc'?'Letter sound':'Heart word'}</div>
+        <button onclick="speak('${card.value}')" class="bg-gradient-to-br ${colorClass} rounded-3xl p-12 md:p-16 mb-6 shadow-2xl hover:scale-105 transition floaty">
+          <div class="text-7xl md:text-9xl font-bold">${card.value}</div>
+          <div class="mt-4 text-sm text-white/80">🔊 Tap to hear</div>
+        </button>
+        <div class="flex gap-3">
+          <button onclick="flashAnswer(false)" class="bg-orange-500/40 hover:bg-orange-500/60 border border-orange-300 px-6 py-3 rounded-xl font-semibold">🤔 Tricky</button>
+          <button onclick="flashAnswer(true)" class="bg-green-500/40 hover:bg-green-500/60 border border-green-300 px-6 py-3 rounded-xl font-semibold">✅ Got it!</button>
+        </div>
+      </div>
+    </div>`;
+  if (!g._spoken) {
+    g._spoken = true;
+    setTimeout(() => speak(card.value), 300);
+  }
+}
+
+window.flashAnswer = (got) => {
+  const g = state.game;
+  const card = g.cards[g.cardIdx];
+  g.history.push({ target: card.value, type: card.type, correct: got });
+  g.attempts++;
+  if (got) { g.correct++; g.score += 10; correctSound(); }
+  else { wrongSound(); }
+  g.cardIdx++;
+  g._spoken = false;
+  if (g.cardIdx >= g.cards.length) g.finished = true;
+  render();
+};
+
+function renderGameEnd(app){
+  const g = state.game;
+  const pct = g.attempts ? Math.round(g.correct/g.attempts*100) : 0;
+  let msg = "Good effort!", emoji = "👍";
+  if (pct >= 90) { msg = "Outstanding!"; emoji = "🏆"; }
+  else if (pct >= 70) { msg = "Well done!"; emoji = "⭐"; }
+  else if (pct >= 50) { msg = "Keep practising!"; emoji = "💪"; }
+  setTimeout(celebrateSound, 100);
+  const wrongItems = g.history.filter(h => !h.correct);
+  const wrongHtml = wrongItems.length 
+    ? `<div class="mt-4"><div class="text-sm text-white/60 mb-2">Items to practise more:</div><div class="flex flex-wrap gap-2 justify-center">${wrongItems.map(w => `<span class="px-3 py-1 bg-orange-500/30 rounded-full">${w.target}</span>`).join('')}</div></div>`
+    : `<div class="mt-4 text-green-200">Nailed every single one! 🌟</div>`;
+  app.innerHTML = `
+    <div class="min-h-screen flex items-center justify-center p-4">
+      <div class="bg-white/10 backdrop-blur border border-white/20 rounded-3xl p-8 max-w-lg w-full text-center fadeIn">
+        <div class="text-7xl mb-4">${emoji}</div>
+        <h2 class="text-3xl font-bold mb-1">${msg}</h2>
+        <p class="text-white/70 mb-6">${state.selectedStudent}</p>
+        <div class="grid grid-cols-3 gap-3 mb-2">
+          <div class="bg-white/10 rounded-xl p-3"><div class="text-2xl font-bold">${g.score}</div><div class="text-xs text-white/70">Stars</div></div>
+          <div class="bg-white/10 rounded-xl p-3"><div class="text-2xl font-bold">${g.correct}/${g.attempts}</div><div class="text-xs text-white/70">Correct</div></div>
+          <div class="bg-white/10 rounded-xl p-3"><div class="text-2xl font-bold">${pct}%</div><div class="text-xs text-white/70">Accuracy</div></div>
+        </div>
+        ${wrongHtml}
+        <div class="flex gap-3 mt-6 justify-center flex-wrap">
+          <button onclick="exportSession()" class="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-xl text-sm">💾 Save results</button>
+          <button onclick="startGame('${g.type}')" class="bg-white/20 hover:bg-white/30 px-5 py-2 rounded-xl">Play again</button>
+          <button onclick="state.view='profile'; render()" class="bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 px-5 py-2 rounded-xl font-semibold">Choose another game</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+window.exportSession = () => {
+  const g = state.game;
+  const out = {
+    student: state.selectedStudent,
+    class: state.classKey,
+    game: g.type,
+    date: new Date().toISOString(),
+    score: g.score,
+    correct: g.correct,
+    attempts: g.attempts,
+    accuracy: g.attempts ? g.correct/g.attempts : 0,
+    history: g.history
+  };
+  const blob = new Blob([JSON.stringify(out, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${state.selectedStudent}_${g.type}_${Date.now()}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
+function confetti() {
+  const colors = ['#f87171','#fbbf24','#34d399','#60a5fa','#a78bfa','#f472b6'];
+  for (let i=0; i<30; i++) {
+    const c = document.createElement('div');
+    c.className = 'confetti';
+    c.style.background = colors[i % colors.length];
+    c.style.left = (Math.random()*100) + '%';
+    c.style.animationDelay = (Math.random()*0.5) + 's';
+    document.body.appendChild(c);
+    setTimeout(() => c.remove(), 2500);
+  }
+}
+
+render();
+</script>
+</body>
+</html>

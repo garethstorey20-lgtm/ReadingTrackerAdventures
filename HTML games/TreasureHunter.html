@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Treasure Hunter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Andika:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { height: 100%; }
+  body {
+    font-family: 'Andika', system-ui, sans-serif;
+    background: linear-gradient(180deg, #0d0221 0%, #240b4d 55%, #3a1078 100%);
+    color: #e8e0ff;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 8px;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  body.embedded {
+    background: transparent;
+    min-height: 0;
+    height: 100%;
+    padding: 0;
+    overflow: hidden;
+  }
+  .pixel { font-family: 'Press Start 2P', monospace; }
+  .th-root {
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    position: relative;
+  }
+  .th-stats {
+    display: flex;
+    gap: 0.2rem;
+    flex-shrink: 0;
+    margin: 0 auto 0.2rem;
+    max-width: 11.5rem;
+    width: 100%;
+  }
+  .th-stat {
+    flex: 1;
+    min-width: 0;
+    text-align: center;
+    padding: 0.12rem 0.18rem;
+    border-radius: 0.5rem;
+    background: rgba(13, 2, 33, 0.85);
+    border: 2px solid var(--accent, #22d3ee);
+    box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+  .th-stat-label {
+    font-size: 0.36rem;
+    letter-spacing: 0.05em;
+    color: #9ca3af;
+    line-height: 1.2;
+  }
+  .th-stat-value {
+    font-size: 0.62rem;
+    margin-top: 0.15rem;
+    color: var(--accent, #22d3ee);
+    text-shadow: 0 0 6px var(--accent, #22d3ee);
+  }
+  .th-main {
+    flex: 1 1 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    gap: 0.35rem;
+    width: 100%;
+  }
+  .th-board-wrap {
+    flex: 1 1 0;
+    min-height: 0;
+    min-width: 0;
+    display: flex;
+    align-items: stretch;
+    justify-content: center;
+    padding: 0.1rem 0;
+    container-type: size;
+  }
+  .th-key-side {
+    flex: 0 0 auto;
+    width: clamp(3.75rem, 13vw, 6rem);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 0.25rem 0.2rem;
+    border-radius: 0.65rem;
+    background: rgba(13, 2, 33, 0.92);
+    border: 2px solid #22d3ee;
+    box-shadow: 0 0 16px rgba(34, 211, 238, 0.45);
+  }
+  .th-key-title {
+    font-size: 0.275rem;
+    color: #a5f3fc;
+    text-align: center;
+    margin-bottom: 0.25rem;
+    letter-spacing: 0.08em;
+  }
+  .th-key-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    margin-bottom: 0.25rem;
+    gap: 0.075rem;
+  }
+  .th-key-item-val {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 1.05rem;
+    color: #cbd5e1;
+    margin-top: 0.05rem;
+    line-height: 1.35;
+  }
+  .th-key-item-val--bonus {
+    font-size: calc(1.05rem * 0.85);
+  }
+  .th-svg-gem {
+    display: block;
+    width: 100%;
+    height: auto;
+    filter: drop-shadow(0 0 6px var(--th-glow, #22d3ee));
+  }
+  .th-svg-gem--tile {
+    width: min(88%, 3.2rem);
+    max-height: 100%;
+  }
+  .th-svg-gem--key {
+    width: min(100%, 2.25rem);
+  }
+  .th-key-divider {
+    height: 1px;
+    background: rgba(34, 211, 238, 0.35);
+    margin: 0.125rem 0;
+  }
+  .th-treasure-svg-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+  }
+  .th-tile--treasure .th-svg-gem--tile,
+  .th-tile--bonus .th-svg-gem--tile {
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .th-board {
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    max-height: 100%;
+    padding: 0.3rem;
+    border-radius: 0.65rem;
+    background: rgba(13, 2, 33, 0.92);
+    border: 2px solid #ff2d95;
+    box-shadow: 0 0 18px rgba(255, 45, 149, 0.45);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .th-grid {
+    display: grid;
+    grid-template-columns: repeat(9, 1fr);
+    grid-template-rows: repeat(5, 1fr);
+    gap: 5px;
+    width: 100%;
+    height: 100%;
+    flex: 1 1 0;
+    min-height: 0;
+  }
+  body.embedded .th-board-wrap {
+    align-items: stretch;
+    justify-content: center;
+  }
+  body.embedded .th-board {
+    max-width: 100%;
+    height: 100%;
+    flex: 1 1 0;
+  }
+  body.embedded .th-grid {
+    width: 100%;
+    height: 100%;
+    max-width: 100%;
+    max-height: 100%;
+  }
+  body.embedded .th-board-wrap {
+    overflow: hidden;
+    flex: 1 1 0;
+    min-height: 0;
+  }
+  .th-tile {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3px 4px;
+    transition: transform 0.12s ease;
+    font-family: 'Sassoon Primary', 'SassoonPrimary', 'Andika', system-ui, sans-serif;
+    font-weight: 700;
+    line-height: 1.1;
+    overflow: hidden;
+    word-break: break-word;
+    text-align: center;
+  }
+  .th-tile:not(:disabled):hover { transform: scale(1.03); }
+  .th-tile:disabled { cursor: default; }
+  .th-tile--hidden {
+    background: linear-gradient(145deg, #3a1078, #1a0a47);
+    border: 2px solid #22d3ee;
+    box-shadow: 0 0 5px #22d3ee, inset 0 0 6px rgba(34, 211, 238, 0.2);
+    color: #fff;
+    font-size: clamp(0.72rem, 2.2cqw, 1.15rem);
+  }
+  .th-tile--hidden.hw { border-color: #f472b6; box-shadow: 0 0 5px #f472b6, inset 0 0 6px rgba(244, 114, 182, 0.2); }
+  .th-tile--revealed {
+    background: linear-gradient(145deg, #160b30, #0d0720);
+    border: 2px solid #2d1b5e;
+    box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.5);
+    color: #cbd5e1;
+    font-size: clamp(0.62rem, 1.65cqw, 1rem);
+    font-weight: 700;
+  }
+  .th-tile--revealed > span:first-child {
+    font-size: clamp(0.68rem, 1.8cqw, 1.08rem);
+  }
+  .th-tile--treasure {
+    background: radial-gradient(circle, rgba(0,0,0,0.45), #1a0a47);
+    border-width: 2px;
+    padding: 2px;
+  }
+  .th-tile--bonus {
+    background: radial-gradient(circle, rgba(255,215,0,0.3), #1a0a47);
+    border: 2px solid #ffd700;
+    box-shadow: 0 0 14px #ffd700;
+    color: #ffd700;
+    flex-direction: column;
+    gap: 0.1rem;
+  }
+  .th-tile--bonus .th-bonus-label {
+    font-family: 'Press Start 2P', monospace;
+    font-size: clamp(0.28rem, 0.85cqw, 0.42rem);
+    line-height: 1.2;
+  }
+  .th-tile--pop { animation: thPop 0.35s ease-out; }
+  @keyframes thPop {
+    0% { transform: scale(0) rotate(-12deg); }
+    70% { transform: scale(1.15) rotate(6deg); }
+    100% { transform: scale(1) rotate(0); }
+  }
+  .th-adj {
+    position: absolute;
+    bottom: 2px;
+    right: 3px;
+    font-size: clamp(0.4rem, 1.1cqw, 0.58rem);
+    font-family: 'Press Start 2P', monospace;
+    opacity: 0.9;
+  }
+  .th-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.82);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.75rem;
+    z-index: 20;
+    border-radius: 0.5rem;
+  }
+  .th-modal {
+    background: linear-gradient(160deg, #240b4d, #0d0221);
+    border: 2px solid #ffd700;
+    box-shadow: 0 0 24px #ffd700;
+    border-radius: 1rem;
+    padding: 1rem;
+    text-align: center;
+    max-width: 16rem;
+    width: 100%;
+  }
+  .th-modal h2 {
+    font-size: 0.65rem;
+    color: #22d3ee;
+    margin: 0.35rem 0;
+    text-shadow: 0 0 6px #22d3ee;
+  }
+  .th-modal-score {
+    font-size: 1.25rem;
+    color: #39ff14;
+    text-shadow: 0 0 8px #39ff14;
+    margin: 0.35rem 0;
+  }
+  .th-bonus-flash {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    font-size: 0.65rem;
+    color: #ffd700;
+    text-shadow: 0 0 12px #ffd700;
+    z-index: 30;
+    animation: thPop 0.5s ease-out forwards;
+  }
+</style>
+</head>
+<body>
+<div class="th-root" id="root"></div>
+<script>
+(function () {
+  const params = new URLSearchParams(location.search);
+  const embedded = params.get('embed') === '1';
+  if (embedded) document.body.classList.add('embedded');
+
+  const GRID_COLS = 9;
+  const GRID_ROWS = 5;
+  const TOTAL = GRID_COLS * GRID_ROWS;
+  const MAX_CLICKS = 10;
+  const BONUS_COUNT = 3;
+  const BONUS_CLICKS = 3;
+
+  const TREASURE_ICON_SVGS = {
+    diamond: `<svg viewBox="0 0 64 64" class="th-svg-gem" aria-hidden="true"><defs><linearGradient id="thDia" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#a5f3fc"/><stop offset="45%" stop-color="#22d3ee"/><stop offset="100%" stop-color="#0e7499"/></linearGradient></defs><polygon points="32,4 58,24 32,60 6,24" fill="url(#thDia)" stroke="#ecfeff" stroke-width="2.5"/><polygon points="32,4 32,60 6,24 58,24" fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="1.2"/></svg>`,
+    emerald: `<svg viewBox="0 0 64 64" class="th-svg-gem" aria-hidden="true"><defs><linearGradient id="thEm" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#86efac"/><stop offset="100%" stop-color="#16a34a"/></linearGradient></defs><rect x="14" y="14" width="36" height="36" rx="4" transform="rotate(45 32 32)" fill="url(#thEm)" stroke="#dcfce7" stroke-width="2.5"/><rect x="22" y="22" width="20" height="20" rx="2" transform="rotate(45 32 32)" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="1.5"/></svg>`,
+    ruby: `<svg viewBox="0 0 64 64" class="th-svg-gem" aria-hidden="true"><defs><linearGradient id="thRu" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#fda4af"/><stop offset="100%" stop-color="#e11d48"/></linearGradient></defs><polygon points="32,6 54,22 44,58 20,58 10,22" fill="url(#thRu)" stroke="#ffe4e6" stroke-width="2.5"/><ellipse cx="32" cy="30" rx="8" ry="10" fill="rgba(255,255,255,0.25)"/></svg>`,
+    gold: `<svg viewBox="0 0 64 64" class="th-svg-gem" aria-hidden="true"><defs><linearGradient id="thGo" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#fef08a"/><stop offset="50%" stop-color="#facc15"/><stop offset="100%" stop-color="#ca8a04"/></linearGradient></defs><ellipse cx="32" cy="36" rx="22" ry="16" fill="url(#thGo)" stroke="#fef9c3" stroke-width="2.5"/><ellipse cx="32" cy="30" rx="14" ry="8" fill="rgba(255,255,255,0.35)"/></svg>`,
+    silver: `<svg viewBox="0 0 64 64" class="th-svg-gem" aria-hidden="true"><defs><linearGradient id="thSi" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#f8fafc"/><stop offset="100%" stop-color="#94a3b8"/></linearGradient></defs><circle cx="32" cy="32" r="20" fill="url(#thSi)" stroke="#e2e8f0" stroke-width="2.5"/><circle cx="26" cy="26" r="6" fill="rgba(255,255,255,0.45)"/></svg>`,
+    star: `<svg viewBox="0 0 64 64" class="th-svg-gem" aria-hidden="true"><defs><linearGradient id="thSt" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#fef9c3"/><stop offset="100%" stop-color="#eab308"/></linearGradient></defs><polygon points="32,4 38,24 60,24 42,38 48,58 32,46 16,58 22,38 4,24 26,24" fill="url(#thSt)" stroke="#fffbeb" stroke-width="2"/></svg>`,
+  };
+
+  const TREASURE_DEFS = [
+    { type: 'Diamond', value: 100, icon: 'diamond', color: '#22d3ee', glow: '#22d3ee' },
+    { type: 'Emerald', value: 50, icon: 'emerald', color: '#39ff14', glow: '#39ff14' },
+    { type: 'Ruby', value: 40, icon: 'ruby', color: '#ff2d95', glow: '#ff2d95' },
+    { type: 'Gold', value: 30, icon: 'gold', color: '#ffd700', glow: '#ffd700' },
+    { type: 'Gold', value: 30, icon: 'gold', color: '#ffd700', glow: '#ffd700' },
+    { type: 'Silver', value: 15, icon: 'silver', color: '#e5e7eb', glow: '#e5e7eb' },
+    { type: 'Silver', value: 15, icon: 'silver', color: '#e5e7eb', glow: '#e5e7eb' },
+    { type: 'Silver', value: 15, icon: 'silver', color: '#e5e7eb', glow: '#e5e7eb' },
+  ];
+
+  const NUM_COLORS = {
+    0: '#475569', 1: '#22d3ee', 2: '#39ff14', 3: '#ffd700',
+    4: '#ff8c00', 5: '#ff2d95', 6: '#a855f7', 7: '#f43f5e', 8: '#fb7185',
+  };
+
+  let focusWords = [];
+  let grid = [];
+  let tileWords = [];
+  let revealed = [];
+  let bonusCells = new Set();
+  let clicksLeft = MAX_CLICKS;
+  let score = 0;
+  let foundList = [];
+  let gameOver = false;
+  let lastFound = -1;
+
+  function cellIndex(row, col) { return row * GRID_COLS + col; }
+  function cellRowCol(index) {
+    return [Math.floor(index / GRID_COLS), index % GRID_COLS];
+  }
+
+  function getNeighbors(index) {
+    const [row, col] = cellRowCol(index);
+    const out = [];
+    for (let r = row - 1; r <= row + 1; r++) {
+      for (let c = col - 1; c <= col + 1; c++) {
+        if (r === row && c === col) continue;
+        if (r >= 0 && r < GRID_ROWS && c >= 0 && c < GRID_COLS) out.push(cellIndex(r, c));
+      }
+    }
+    return out;
+  }
+
+  function isTreasureOrBonus(cell) {
+    return cell && (cell.isTreasure || cell.isBonus);
+  }
+
+  /** Minesweeper-style: flood through connected 0 cells and reveal their numbered neighbors. */
+  function autoRevealZeroRegion(startIdx) {
+    const stack = [startIdx];
+    const seen = new Set();
+    while (stack.length) {
+      const i = stack.pop();
+      if (seen.has(i)) continue;
+      seen.add(i);
+      const cell = grid[i];
+      if (isTreasureOrBonus(cell)) continue;
+      if (!revealed[i]) revealed[i] = true;
+      const count = typeof cell === 'number' ? cell : 0;
+      for (const n of getNeighbors(i)) {
+        const nc = grid[n];
+        if (isTreasureOrBonus(nc)) continue;
+        if (!revealed[n]) {
+          if (typeof nc === 'number' && nc > 0) revealed[n] = true;
+          else if (nc === 0) stack.push(n);
+        }
+      }
+      if (count !== 0) continue;
+    }
+  }
+
+  function setFocusWords(words) {
+    if (!Array.isArray(words)) return;
+    focusWords = words.filter(w => w && w.value);
+  }
+
+  function speakWord(text) {
+    if (!text) return;
+    if (embedded && window.parent !== window) {
+      try { window.parent.postMessage({ type: 'treasure-speak', word: text }, '*'); } catch (e) {}
+    }
+  }
+
+  function shuffle(arr) {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  function assignTileWords() {
+    const pool = [];
+    const items = focusWords.length ? focusWords : [{ type: 'gpc', value: 'a' }];
+    while (pool.length < TOTAL) pool.push(...shuffle(items));
+    return shuffle(pool).slice(0, TOTAL);
+  }
+
+  function pickUniquePositions(count, exclude) {
+    const ex = exclude || new Set();
+    const positions = new Set();
+    while (positions.size < count) {
+      const p = Math.floor(Math.random() * TOTAL);
+      if (!ex.has(p)) positions.add(p);
+    }
+    return positions;
+  }
+
+  function initGame() {
+    const newGrid = Array(TOTAL).fill(0);
+    bonusCells = pickUniquePositions(BONUS_COUNT);
+    const treasurePositions = pickUniquePositions(TREASURE_DEFS.length, bonusCells);
+    const posArr = [...treasurePositions];
+    posArr.forEach((pos, i) => {
+      newGrid[pos] = { ...TREASURE_DEFS[i], isTreasure: true };
+    });
+
+    for (let i = 0; i < TOTAL; i++) {
+      if (newGrid[i] && newGrid[i].isTreasure) continue;
+      if (bonusCells.has(i)) {
+        newGrid[i] = { isBonus: true };
+        continue;
+      }
+      let count = 0;
+      const [row, col] = cellRowCol(i);
+      for (let r = row - 1; r <= row + 1; r++) {
+        for (let c = col - 1; c <= col + 1; c++) {
+          if (r >= 0 && r < GRID_ROWS && c >= 0 && c < GRID_COLS) {
+            const idx = cellIndex(r, c);
+            if (newGrid[idx] && (newGrid[idx].isTreasure || newGrid[idx].isBonus)) count++;
+          }
+        }
+      }
+      newGrid[i] = count;
+    }
+
+    grid = newGrid;
+    tileWords = assignTileWords();
+    revealed = Array(TOTAL).fill(false);
+    clicksLeft = MAX_CLICKS;
+    score = 0;
+    foundList = [];
+    gameOver = false;
+    lastFound = -1;
+    render();
+  }
+
+  function endGame() {
+    gameOver = true;
+    if (embedded && window.parent !== window) {
+      try {
+        window.parent.postMessage({
+          type: 'treasure-game-over',
+          score,
+          allFound: foundList.length >= TREASURE_DEFS.length
+        }, '*');
+      } catch (e) {}
+    }
+    render();
+  }
+
+  function handleClick(index) {
+    if (gameOver || revealed[index] || clicksLeft <= 0) return;
+
+    const word = tileWords[index];
+    if (word && word.value) speakWord(word.value);
+
+    revealed[index] = true;
+    lastFound = index;
+    let extraClicks = 0;
+    const cell = grid[index];
+
+    if (typeof cell === 'number' && cell === 0) {
+      autoRevealZeroRegion(index);
+    }
+
+    if (cell && cell.isBonus) {
+      extraClicks = BONUS_CLICKS;
+      showBonusFlash();
+    }
+
+    clicksLeft = clicksLeft - 1 + extraClicks;
+
+    if (cell && cell.isTreasure) {
+      score += cell.value;
+      foundList.push(cell);
+    }
+
+    if (clicksLeft <= 0 || foundList.length >= TREASURE_DEFS.length) {
+      setTimeout(endGame, 400);
+    }
+    render();
+  }
+
+  function showBonusFlash() {
+    const el = document.createElement('div');
+    el.className = 'th-bonus-flash pixel';
+    el.textContent = '+3 CLICKS!';
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 600);
+  }
+
+  function escapeHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  let _svgUid = 0;
+  function treasureSvgHtml(iconId, sizeClass, glow) {
+    let svg = TREASURE_ICON_SVGS[iconId] || '';
+    const uid = ++_svgUid;
+    svg = svg.replace(/id="(th\w+)"/g, `id="$1_${uid}"`).replace(/url\(#(th\w+)\)/g, `url(#$1_${uid})`);
+    const glowStyle = glow ? `--th-glow:${glow}` : '';
+    return `<span class="th-treasure-svg-wrap" style="${glowStyle}">${svg.replace('class="th-svg-gem"', `class="th-svg-gem ${sizeClass}"`)}</span>`;
+  }
+
+  function renderTreasureKeyHtml() {
+    const rows = [
+      { icon: 'diamond', label: '100', color: '#22d3ee', glow: '#22d3ee' },
+      { icon: 'emerald', label: '50', color: '#39ff14', glow: '#39ff14' },
+      { icon: 'ruby', label: '40', color: '#ff2d95', glow: '#ff2d95' },
+      { icon: 'gold', label: '30', color: '#ffd700', glow: '#ffd700', note: '×2' },
+      { icon: 'silver', label: '15', color: '#e5e7eb', glow: '#e5e7eb', note: '×3' },
+    ];
+    const items = rows.map(r =>
+      `<div class="th-key-item" style="color:${r.color}">
+        ${treasureSvgHtml(r.icon, 'th-svg-gem--key', r.glow)}
+        <span class="th-key-item-val">${r.label}${r.note ? ' ' + r.note : ''}</span>
+      </div>`
+    ).join('');
+    return `
+      <aside class="th-key-side" aria-label="Treasure key">
+        <div class="th-key-title pixel">TREASURE KEY</div>
+        ${items}
+        <div class="th-key-divider"></div>
+        <div class="th-key-item" style="color:#ffd700">
+          ${treasureSvgHtml('star', 'th-svg-gem--key', '#ffd700')}
+          <span class="th-key-item-val th-key-item-val--bonus">+${BONUS_CLICKS} clicks</span>
+        </div>
+      </aside>`;
+  }
+
+  function renderTile(index) {
+    const isRevealed = revealed[index];
+    const cell = grid[index];
+    const word = tileWords[index];
+    const label = word ? word.value : '?';
+    const hw = word && word.type === 'hw';
+    const disabled = gameOver || isRevealed || clicksLeft <= 0;
+
+    if (!isRevealed) {
+      return `<button type="button" class="th-tile th-tile--hidden${hw ? ' hw' : ''}" data-idx="${index}" ${disabled ? 'disabled' : ''} title="${escapeHtml(label)}">${escapeHtml(label)}</button>`;
+    }
+
+    if (cell && cell.isTreasure) {
+      const pop = index === lastFound ? ' th-tile--pop' : '';
+      const icon = cell.icon || 'gold';
+      return `<div class="th-tile th-tile--treasure${pop}" style="border-color:${cell.color};box-shadow:0 0 14px ${cell.glow}" title="${cell.type} +${cell.value}">${treasureSvgHtml(icon, 'th-svg-gem--tile', cell.glow)}</div>`;
+    }
+
+    if (cell && cell.isBonus) {
+      return `<div class="th-tile th-tile--bonus th-tile--pop" title="Bonus +3 clicks">${treasureSvgHtml('star', 'th-svg-gem--tile', '#ffd700')}<span class="th-bonus-label">+3</span></div>`;
+    }
+
+    const adj = typeof cell === 'number' ? cell : 0;
+    const adjColor = NUM_COLORS[adj] || '#fff';
+    const adjHtml = adj > 0 ? `<span class="th-adj" style="color:${adjColor}">${adj}</span>` : '';
+    return `<div class="th-tile th-tile--revealed" title="${escapeHtml(label)}"><span>${escapeHtml(label)}</span>${adjHtml}</div>`;
+  }
+
+  function render() {
+    const root = document.getElementById('root');
+    if (!root) return;
+
+    let tiles = '';
+    for (let i = 0; i < TOTAL; i++) tiles += renderTile(i);
+
+    const allFound = foundList.length >= TREASURE_DEFS.length;
+    let overlay = '';
+    if (gameOver) {
+      overlay = `
+        <div class="th-overlay">
+          <div class="th-modal">
+            <div style="font-size:2rem">${allFound ? '🏆' : '⛏️'}</div>
+            <h2 class="pixel">${allFound ? 'ALL TREASURE!' : 'OUT OF CLICKS'}</h2>
+            <p class="pixel th-modal-score">${score}</p>
+            <p class="pixel" style="font-size:0.45rem;color:#9ca3af;margin-bottom:0.5rem">SCORE</p>
+          </div>
+        </div>`;
+    }
+
+    root.innerHTML = `
+      <div class="th-stats">
+        <div class="th-stat" style="--accent:#39ff14">
+          <div class="th-stat-label pixel">SCORE</div>
+          <div class="th-stat-value pixel">${score}</div>
+        </div>
+        <div class="th-stat" style="--accent:#22d3ee">
+          <div class="th-stat-label pixel">CLICKS</div>
+          <div class="th-stat-value pixel">${clicksLeft}</div>
+        </div>
+        <div class="th-stat" style="--accent:#ffd700">
+          <div class="th-stat-label pixel">FOUND</div>
+          <div class="th-stat-value pixel">${foundList.length}/${TREASURE_DEFS.length}</div>
+        </div>
+      </div>
+      <div class="th-main">
+        <div class="th-board-wrap">
+          <div class="th-board">
+            <div class="th-grid">${tiles}</div>
+            ${overlay}
+          </div>
+        </div>
+        ${renderTreasureKeyHtml()}
+      </div>`;
+
+    root.querySelectorAll('.th-tile--hidden:not([disabled])').forEach(btn => {
+      btn.addEventListener('click', () => handleClick(Number(btn.dataset.idx)));
+    });
+  }
+
+  if (embedded) {
+    let started = false;
+    function startIfNeeded() {
+      if (started) return;
+      started = true;
+      initGame();
+    }
+    window.addEventListener('message', (e) => {
+      if (e.data && e.data.type === 'treasure-focus-words') {
+        setFocusWords(e.data.words);
+        if (!started) startIfNeeded();
+        else { tileWords = assignTileWords(); render(); }
+      }
+      if (e.data && e.data.type === 'treasure-restart') initGame();
+    });
+    try { window.parent.postMessage({ type: 'treasure-ready' }, '*'); } catch (e) {}
+    setTimeout(startIfNeeded, 400);
+  } else {
+    initGame();
+  }
+})();
+</script>
+</body>
+</html>

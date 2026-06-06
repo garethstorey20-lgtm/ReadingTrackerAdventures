@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connect 4</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: Arial, sans-serif;
+            padding: 20px;
+        }
+
+        .game-container {
+            text-align: center;
+        }
+
+        .board {
+            display: grid;
+            grid-template-columns: repeat(7, 70px);
+            gap: 8px;
+            background: #1e3a5f;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        }
+
+        .cell {
+            width: 70px;
+            height: 70px;
+            background: #2563eb;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 3px solid #1e40af;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .cell:hover {
+            transform: scale(1.05);
+            background: #3b82f6;
+        }
+
+        .cell.disabled:hover {
+            transform: scale(1);
+            cursor: not-allowed;
+            background: #2563eb;
+        }
+
+        .piece {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            position: absolute;
+        }
+
+        .piece.player {
+            background: radial-gradient(circle at 30% 30%, #ffeb3b, #fbc02d);
+            box-shadow: inset -2px -2px 5px rgba(0, 0, 0, 0.2);
+        }
+
+        .piece.computer {
+            background: radial-gradient(circle at 30% 30%, #ff5252, #d32f2f);
+            box-shadow: inset -2px -2px 5px rgba(0, 0, 0, 0.2);
+        }
+
+        .piece.static {
+            animation: none;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        .piece.animated {
+            animation: drop 0.5s ease-in forwards;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        @keyframes drop {
+            from {
+                opacity: 0;
+                transform: translate(-50%, -300px);
+            }
+            to {
+                opacity: 1;
+                transform: translate(-50%, -50%);
+            }
+        }
+
+        .status {
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 20px;
+            height: 32px;
+            color: white;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .status.player {
+            color: #ffeb3b;
+        }
+
+        .status.computer {
+            color: #ff5252;
+        }
+
+        .status.winner {
+            color: #4ade80;
+            font-size: 28px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        button {
+            padding: 12px 24px;
+            font-size: 16px;
+            font-weight: bold;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .reset-btn {
+            background: #4ade80;
+            color: white;
+            box-shadow: 0 4px 12px rgba(74, 222, 128, 0.3);
+        }
+
+        .reset-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(74, 222, 128, 0.4);
+        }
+
+        .reset-btn:active {
+            transform: translateY(0);
+        }
+
+        .column-hint {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.6);
+            margin-top: 15px;
+        }
+
+        @media (max-width: 480px) {
+            .board {
+                grid-template-columns: repeat(7, 50px);
+                gap: 6px;
+                padding: 10px;
+            }
+
+            .cell {
+                width: 50px;
+                height: 50px;
+                border-width: 2px;
+            }
+
+            .piece {
+                width: 44px;
+                height: 44px;
+            }
+
+            .status {
+                font-size: 18px;
+            }
+
+            button {
+                padding: 10px 16px;
+                font-size: 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <div class="status" id="status">Your Turn</div>
+        <div class="board" id="board"></div>
+        <div class="column-hint">Click a column to drop your piece</div>
+        <div class="controls">
+            <button class="reset-btn" onclick="resetGame()">New Game</button>
+        </div>
+    </div>
+
+    <script>
+        const ROWS = 6;
+        const COLS = 7;
+        const PLAYER = 1;
+        const COMPUTER = 2;
+        const EMPTY = 0;
+
+        let board = [];
+        let gameActive = true;
+        let isPlayerTurn = true;
+        let lastPlayedCell = null;
+
+        function initBoard() {
+            board = Array(ROWS).fill(null).map(() => Array(COLS).fill(EMPTY));
+        }
+
+        function resetGame() {
+            initBoard();
+            gameActive = true;
+            isPlayerTurn = true;
+            lastPlayedCell = null;
+            renderBoard();
+            updateStatus();
+        }
+
+        function renderBoard() {
+            const boardElement = document.getElementById('board');
+            boardElement.innerHTML = '';
+
+            for (let row = 0; row < ROWS; row++) {
+                for (let col = 0; col < COLS; col++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'cell';
+                    if (!gameActive || !isPlayerTurn) {
+                        cell.classList.add('disabled');
+                    }
+
+                    const value = board[row][col];
+                    if (value !== EMPTY) {
+                        const piece = document.createElement('div');
+                        piece.className = 'piece';
+                        piece.classList.add(value === PLAYER ? 'player' : 'computer');
+                        piece.classList.add('static');
+                        cell.appendChild(piece);
+                    }
+
+                    if (isPlayerTurn && gameActive) {
+                        cell.onclick = () => playerMove(col);
+                    }
+
+                    boardElement.appendChild(cell);
+                }
+            }
+        }
+
+        function updateStatus() {
+            const statusElement = document.getElementById('status');
+            if (!gameActive) {
+                const winner = checkWinner();
+                if (winner === PLAYER) {
+                    statusElement.textContent = '🎉 You Won!';
+                    statusElement.className = 'status winner';
+                } else if (winner === COMPUTER) {
+                    statusElement.textContent = '🤖 Computer Won';
+                    statusElement.className = 'status computer';
+                } else {
+                    statusElement.textContent = "It's a Draw!";
+                    statusElement.className = 'status';
+                    statusElement.style.color = '#a78bfa';
+                }
+            } else if (isPlayerTurn) {
+                statusElement.textContent = 'Your Turn';
+                statusElement.className = 'status player';
+            } else {
+                statusElement.textContent = 'Computer Thinking...';
+                statusElement.className = 'status computer';
+            }
+        }
+
+        function playerMove(col) {
+            if (!gameActive || !isPlayerTurn) return;
+
+            const row = findLowestRow(col);
+            if (row === -1) return;
+
+            board[row][col] = PLAYER;
+            renderBoardWithAnimation(row, col, PLAYER);
+
+            if (checkWinner() === PLAYER) {
+                gameActive = false;
+                updateStatus();
+                return;
+            }
+
+            if (isBoardFull()) {
+                gameActive = false;
+                updateStatus();
+                return;
+            }
+
+            isPlayerTurn = false;
+            updateStatus();
+
+            const delay = Math.random() * 2000 + 1000;
+            setTimeout(computerMove, delay);
+        }
+
+        function computerMove() {
+            const col = getBestMove();
+            const row = findLowestRow(col);
+
+            if (row === -1) {
+                isPlayerTurn = true;
+                renderBoard();
+                updateStatus();
+                return;
+            }
+
+            board[row][col] = COMPUTER;
+            renderBoardWithAnimation(row, col, COMPUTER);
+
+            if (checkWinner() === COMPUTER) {
+                gameActive = false;
+                updateStatus();
+                return;
+            }
+
+            if (isBoardFull()) {
+                gameActive = false;
+                updateStatus();
+                return;
+            }
+
+            isPlayerTurn = true;
+            renderBoard();
+            updateStatus();
+        }
+
+        function renderBoardWithAnimation(animRow, animCol, player) {
+            const boardElement = document.getElementById('board');
+            boardElement.innerHTML = '';
+
+            for (let row = 0; row < ROWS; row++) {
+                for (let col = 0; col < COLS; col++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'cell';
+                    if (!gameActive || !isPlayerTurn) {
+                        cell.classList.add('disabled');
+                    }
+
+                    const value = board[row][col];
+                    if (value !== EMPTY) {
+                        const piece = document.createElement('div');
+                        piece.className = 'piece';
+                        piece.classList.add(value === PLAYER ? 'player' : 'computer');
+
+                        if (row === animRow && col === animCol) {
+                            piece.classList.add('animated');
+                        } else {
+                            piece.classList.add('static');
+                        }
+
+                        cell.appendChild(piece);
+                    }
+
+                    if (isPlayerTurn && gameActive) {
+                        cell.onclick = () => playerMove(col);
+                    }
+
+                    boardElement.appendChild(cell);
+                }
+            }
+        }
+
+        function getBestMove() {
+            // Try to win
+            for (let col = 0; col < COLS; col++) {
+                const row = findLowestRow(col);
+                if (row === -1) continue;
+                board[row][col] = COMPUTER;
+                if (checkWinner() === COMPUTER) {
+                    board[row][col] = EMPTY;
+                    return col;
+                }
+                board[row][col] = EMPTY;
+            }
+
+            // Block player from winning
+            for (let col = 0; col < COLS; col++) {
+                const row = findLowestRow(col);
+                if (row === -1) continue;
+                board[row][col] = PLAYER;
+                if (checkWinner() === PLAYER) {
+                    board[row][col] = EMPTY;
+                    return col;
+                }
+                board[row][col] = EMPTY;
+            }
+
+            // Prefer center columns
+            const centerCols = [3, 2, 4, 1, 5, 0, 6];
+            for (let col of centerCols) {
+                if (findLowestRow(col) !== -1) {
+                    return col;
+                }
+            }
+
+            return 0;
+        }
+
+        function findLowestRow(col) {
+            for (let row = ROWS - 1; row >= 0; row--) {
+                if (board[row][col] === EMPTY) {
+                    return row;
+                }
+            }
+            return -1;
+        }
+
+        function checkWinner() {
+            // Horizontal
+            for (let row = 0; row < ROWS; row++) {
+                for (let col = 0; col < COLS - 3; col++) {
+                    const first = board[row][col];
+                    if (first !== EMPTY && board[row][col + 1] === first && board[row][col + 2] === first && board[row][col + 3] === first) {
+                        return first;
+                    }
+                }
+            }
+
+            // Vertical
+            for (let col = 0; col < COLS; col++) {
+                for (let row = 0; row < ROWS - 3; row++) {
+                    const first = board[row][col];
+                    if (first !== EMPTY && board[row + 1][col] === first && board[row + 2][col] === first && board[row + 3][col] === first) {
+                        return first;
+                    }
+                }
+            }
+
+            // Diagonal (top-left to bottom-right)
+            for (let row = 0; row < ROWS - 3; row++) {
+                for (let col = 0; col < COLS - 3; col++) {
+                    const first = board[row][col];
+                    if (first !== EMPTY && board[row + 1][col + 1] === first && board[row + 2][col + 2] === first && board[row + 3][col + 3] === first) {
+                        return first;
+                    }
+                }
+            }
+
+            // Diagonal (top-right to bottom-left)
+            for (let row = 0; row < ROWS - 3; row++) {
+                for (let col = 3; col < COLS; col++) {
+                    const first = board[row][col];
+                    if (first !== EMPTY && board[row + 1][col - 1] === first && board[row + 2][col - 2] === first && board[row + 3][col - 3] === first) {
+                        return first;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        function isBoardFull() {
+            return board.every(row => row.every(cell => cell !== EMPTY));
+        }
+
+        // Initialize the game
+        initBoard();
+        renderBoard();
+        updateStatus();
+    </script>
+</body>
+</html>
