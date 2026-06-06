@@ -1,0 +1,12 @@
+# Secrets — never publish API keys
+web-pilot/drive-config.js
+
+# Desktop / dev
+node_modules/
+reading-tracker-suite/
+*.json
+!data/**/*.json
+
+# OS
+.DS_Store
+Thumbs.db
